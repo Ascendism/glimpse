@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Glimpse — Stage</title>
+  <link rel="stylesheet" href="/play/glimpse/static/glimpse.css" />
+  <script type="importmap">
+    { "imports": { "three": "/play/glimpse/static/vendor/three.module.js" } }
+  </script>
+</head>
+<body data-phase="lobby">
+  <div class="gl-stage-wrap">
+    <div class="gl-stage" id="stage" data-harness-ref="glimpse-stage">
+      <div class="gl-scan" aria-hidden="true"></div>
+      <header class="gl-top">
+        <div class="gl-bug">
+          <span class="gl-live" data-gl="live"><i></i>LIVE</span>
+          <span class="gl-mark" data-gl="mark">GLIMPSE</span>
+        </div>
+        <div class="gl-meta-col">
+          <div class="gl-round-lbl">ROUND</div>
+          <div class="gl-round-num" data-gl="round">00</div>
+          <div class="gl-kicker"><span data-gl="sample" class="hidden">SAMPLE 1</span> · <span data-gl="locks"></span></div>
+          <div class="gl-kicker"><span data-gl="pool">MIXED</span> · <span data-gl="challenge">CLOSE ENOUGH</span></div>
+        </div>
+      </header>
+
+      <div class="gl-well gl-well--board">
+        <div class="gl-well-bar"></div>
+        <span class="gl-typechip" data-gl="type">STANDBY</span>
+        <div class="gl-board-stage" data-gl="board" data-harness-ref="glimpse-board"></div>
+        <div class="gl-user-stage gl-stage-clip gl-stage-clip--pip">
+          <div class="gl-vjs-mount gl-yt" data-gl="yt"></div>
+        </div>
+        <div class="gl-board-hud">
+          <div class="gl-waiting" data-gl="wait">Waiting on the host</div>
+          <div class="gl-timer" data-gl="timer">—</div>
+        </div>
+        <audio data-gl="audio" class="hidden"></audio>
+      </div>
+
+      <div class="gl-onair" data-gl="onair"></div>
+      <div class="gl-reveal hidden" data-gl="reveal">
+        <p class="gl-kicker hidden">Identified</p>
+        <div class="gl-reveal-title hidden" data-gl="reveal-title"></div>
+        <div class="gl-reveal-sub hidden" data-gl="reveal-sub"></div>
+      </div>
+
+      <footer class="gl-lower">
+        <div class="gl-lower-rule gl-rule"></div>
+        <div class="gl-seats" data-gl="seats"></div>
+      </footer>
+      <div class="gl-ticker"><div class="gl-ticker-track" data-gl="ticker"><span>GLIMPSE</span><span>GLIMPSE</span></div></div>
+    </div>
+  </div>
+  <script src="/play/glimpse/static/onair.js"></script>
+  <script src="/play/glimpse/static/player.js"></script>
+  <script src="/play/glimpse/static/client.js"></script>
+  <script type="module">
+    import { mountArchiveStage } from '/play/glimpse/static/boardStage.js';
+    const stage = document.getElementById('stage');
+    const boardEl = stage.querySelector('[data-gl="board"]');
+    mountArchiveStage(boardEl);
+    const fit = () => {
+      GlimpseApp.fitStage(stage);
+      if (window.__GLIMPSE_BOARD__) window.__GLIMPSE_BOARD__.fit();
+    };
+    fit();
+    window.addEventListener('resize', fit);
+    const app = new GlimpseApp({ mode: 'stage', root: stage });
+    app.connect();
+  </script>
+</body>
+</html>

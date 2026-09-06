@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "_readme": "Blank Glimpse knowledge profile. Live profiles live under operator home glimpse/profiles/.",
+  "playerId": "example",
+  "domains": { "music": 0.5, "movies": 0.5, "tv": 0.5 },
+  "concepts": {},
+  "people": {},
+  "eras": {},
+  "titles": {},
+  "seen": []
+}

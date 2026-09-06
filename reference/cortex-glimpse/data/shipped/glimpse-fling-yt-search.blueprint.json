@@ -1,0 +1,24 @@
+{
+  "schema": "cortex_blueprint_v1",
+  "format": "fling",
+  "id": "glimpse-yt-search",
+  "title": "Glimpse YouTube hunt",
+  "description": "Background-tab YouTube search for Glimpse. Not a hub-tick job. Does not steal the focused tab.",
+  "version": 1,
+  "_readme": "Materialized per-operator under {operatorHome}/glimpse/routines/. Run only from Glimpse Find more.",
+  "nodes": [
+    { "id": "start", "type": "start" },
+    { "id": "gate", "type": "fling_gate_online", "config": { "require_usable": true } },
+    { "id": "open", "type": "fling_tab_open", "config": { "active": false, "url": "" } },
+    { "id": "wait", "type": "fling_tab_wait", "config": { "wait_until": "complete", "timeout_ms": 15000 } },
+    { "id": "index", "type": "fling_tab_content_index", "config": { "query": "video" } },
+    { "id": "close", "type": "fling_tab_close", "config": {} }
+  ],
+  "edges": [
+    { "from": "start", "to": "gate" },
+    { "from": "gate", "to": "open", "port": "then" },
+    { "from": "open", "to": "wait" },
+    { "from": "wait", "to": "index" },
+    { "from": "index", "to": "close" }
+  ]
+}
