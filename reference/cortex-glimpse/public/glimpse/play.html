@@ -1,1 +1,53 @@
-404: Not Found
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Glimpse - Play</title>
+  <link rel="stylesheet" href="glimpse.css">
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🎬 Glimpse</h1>
+    </div>
+
+    <div id="join-screen" class="game-area">
+      <h2>Join Game</h2>
+      <div class="join-form">
+        <input type="text" id="room-code-input" placeholder="Enter Room Code" maxlength="6">
+        <input type="text" id="player-name-input" placeholder="Your Name" maxlength="20">
+        <button id="join-btn" class="btn btn-primary">Join Game</button>
+      </div>
+      <div id="join-error" class="error" style="display: none;"></div>
+    </div>
+
+    <div id="game-screen" class="game-area" style="display: none;">
+      <div id="round-info" class="round-info">
+        <span id="round-number">Waiting to start...</span>
+      </div>
+
+      <div id="video-area" class="video-container" style="display: none;">
+        <div id="video-player"></div>
+      </div>
+
+      <div id="guess-area" class="guess-input" style="display: none;">
+        <input type="text" id="guess-input" placeholder="Your guess...">
+        <button id="submit-guess-btn" class="btn btn-primary">Submit</button>
+      </div>
+
+      <div id="status-message" class="status-message">
+        Waiting for game to start...
+      </div>
+
+      <div class="scoreboard">
+        <h2>Scoreboard</h2>
+        <div id="player-list" class="player-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="player.js"></script>
+</body>
+</html>

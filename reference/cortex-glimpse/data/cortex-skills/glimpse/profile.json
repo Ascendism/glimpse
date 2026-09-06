@@ -1,1 +1,110 @@
-404: Not Found
+{
+  "schema_version": 1,
+  "skill_id": "glimpse",
+  "title": "Glimpse",
+  "description": "Host-authoritative media-recognition party game. Friends join from a phone browser — no Cortex install. Songs, movies, and TV on one engine with a fuzzy answer judge and an agentic curator.",
+  "version": "1.0.0",
+  "status": "active",
+  "trust": "operator_promoted",
+  "hosts": {
+    "session": {
+      "enabled": true,
+      "placements": ["dock", "popout"]
+    },
+    "floor": {
+      "enabled": true,
+      "mode": "app_window",
+      "singleton": "per_room",
+      "share_state": "room",
+      "open_policy": "room_members",
+      "pin_allowed": true,
+      "start_menu": true,
+      "default_width": 1280,
+      "default_height": 860,
+      "start_menu_label": "Glimpse"
+    }
+  },
+  "ui": { "contract": "skill_ui_v1", "adaptive": true },
+  "triggers": [
+    { "kind": "slash", "value": "/glimpse", "weight": 1 },
+    { "kind": "slash", "value": "/identify", "weight": 0.95 },
+    { "kind": "keyword", "value": "close enough", "weight": 0.92 },
+    { "kind": "keyword", "value": "name that clip", "weight": 0.85 },
+    { "kind": "keyword", "value": "music trivia", "weight": 0.7 }
+  ],
+  "hooks": {
+    "chat_expander": "none",
+    "intent_contract": "none",
+    "composer_immediate": true
+  },
+  "tool_refs": [
+    { "tool_id": "run_skill", "invoke_when": "host Glimpse or open the dealer table", "required": false }
+  ],
+  "loop_archetype_ids": [],
+  "preprompt_hint": "Glimpse (`/glimpse`) is a host-authoritative party game. Open the Control Room at GET /glimpse, create a table, share the /play/glimpse/:invite link. Guests do not need Cortex. Do not invent Socket.IO or a separate backend.",
+  "runtime": {
+    "kind": "workspace_script",
+    "script_path": "data/cortex-skills/glimpse/script.js",
+    "trust": "operator_promoted",
+    "verbose_default": "auto",
+    "narrate_channel": "skill_chat_v1",
+    "speech_patterns": ["/glimpse", "/identify", "close enough", "name that clip"],
+    "args_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["open_ui", "status", "create_room", "catalog"],
+          "default": "open_ui"
+        },
+        "pool": { "type": "string", "enum": ["music", "movies", "television", "mixed"] },
+        "challenge": { "type": "string", "maxLength": 40 },
+        "acceptance": { "type": "string", "maxLength": 20 },
+        "displayName": { "type": "string", "maxLength": 40 }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["ok", "action"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "action": { "type": "string" },
+        "href": { "type": "string" },
+        "ui": { "type": "object" }
+      }
+    },
+    "exports_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["href", "action"],
+      "properties": {
+        "href": { "type": "string" },
+        "action": { "type": "string" }
+      }
+    },
+    "callables": [
+      { "id": "open_ui", "title": "Open table", "description": "Open the Glimpse dealer table" },
+      { "id": "create_room", "title": "Create room", "description": "Create a host-authoritative room + guest invite" },
+      { "id": "catalog", "title": "Catalog", "description": "List seed media items" }
+    ]
+  },
+  "test_fixtures": {
+    "open_ui_smoke": {
+      "args": { "action": "open_ui" },
+      "expect": { "ok": true, "result_must_include_keys": ["href", "action", "ui"] }
+    },
+    "status_smoke": {
+      "args": { "action": "status" },
+      "expect": { "ok": true, "result_must_include_keys": ["href", "action"] }
+    }
+  },
+  "provenance": {
+    "source": "cortex-skills-operator",
+    "pack_origin": "manual",
+    "created_by": "cortex-glimpse"
+  },
+  "created_at": "2026-08-19T00:00:00.000Z",
+  "updated_at": "2026-08-19T00:00:00.000Z"
+}

@@ -1,1 +1,96 @@
-404: Not Found
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Glimpse — Cortex</title>
+  <link rel="stylesheet" href="/glimpse/glimpse.css" />
+</head>
+<body class="gl-host gl-control-room">
+  <main
+    class="gl-host-shell"
+    data-skill-id="glimpse"
+    data-cortex-skill-page-title="Glimpse"
+    data-skill-ui-contract="skill_ui_v1"
+    data-harness-ref="skill-ui-root-glimpse"
+  >
+    <header class="gl-host-head">
+      <div class="gl-head-left">
+        <p class="gl-kicker">Control room</p>
+        <h1>Glimpse</h1>
+      </div>
+      <div class="gl-head-right">
+        <div class="gl-status" id="ce-status" data-state="unknown">Idle</div>
+        <p class="gl-link gl-code-display" id="ce-code">————</p>
+      </div>
+    </header>
+
+    <div class="gl-control-grid">
+      <section class="gl-control-preview">
+        <div class="gl-preview-wrap" id="ce-transport-wrap">
+          <div class="gl-vjs-mount" id="ce-clip" data-gl="yt"></div>
+          <p class="gl-preview-idle" id="ce-preview-idle">Pause and play here. The whole table follows.</p>
+        </div>
+        <p class="gl-link gl-preview-info" id="ce-round">Lobby</p>
+      </section>
+
+      <aside class="gl-control-sidebar">
+        <div class="gl-panel" data-harness-ref="ce-setup">
+          <h2>Open the table</h2>
+          <div class="gl-grid">
+            <label class="gl-field">Catalog
+              <select id="ce-catalog" class="gl-input">
+                <option value="mixed">Mixed (any era)</option>
+                <option value="movies">Movies (any era)</option>
+                <option value="television">TV shows (any era)</option>
+                <option value="music">Music (any era)</option>
+              </select>
+            </label>
+            <label class="gl-field">Matching type
+              <select id="ce-match" class="gl-input">
+                <option value="close_enough">Close Enough</option>
+                <option value="exact">Exact</option>
+              </select>
+            </label>
+          </div>
+          <div class="gl-actions" style="margin-top:12px">
+            <button type="button" class="gl-btn" id="ce-create" data-harness-ref="ce-create">Create table</button>
+            <button type="button" class="gl-btn ghost" id="ce-copy">Copy phone join URL</button>
+          </div>
+          <p class="gl-link" id="ce-link">No table yet. Create one, then shout the code across the room.</p>
+          <div class="gl-nudge hidden" id="ce-nudge"></div>
+          <label class="gl-field" style="margin-top:12px">
+            <input type="checkbox" id="ce-fling" /> Use Fling (new background tab only)
+            <span id="ce-fling-hint" class="gl-link"></span>
+          </label>
+          <div class="gl-actions" style="margin-top:8px">
+            <button type="button" class="gl-btn ghost" id="ce-hunt">Find more on YouTube</button>
+          </div>
+          <div id="ce-hunt-out"></div>
+        </div>
+
+        <div class="gl-panel">
+          <h2>Round</h2>
+          <div class="gl-play-seats" id="ce-players"></div>
+          <div class="gl-actions" style="margin-top:12px">
+            <button type="button" class="gl-btn" id="ce-confirm" disabled>Confirm</button>
+            <button type="button" class="gl-btn ghost" id="ce-start">Start round</button>
+            <button type="button" class="gl-btn ghost" id="ce-escalate">Another clip</button>
+            <button type="button" class="gl-btn ghost" id="ce-lock">Lock table</button>
+          </div>
+        </div>
+
+        <div class="gl-panel">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <h2 style="margin:0">Curator queue</h2>
+            <button type="button" class="gl-btn ghost" id="ce-queue">Queue ahead</button>
+          </div>
+          <div id="ce-queue-list"></div>
+        </div>
+      </aside>
+    </div>
+  </main>
+  <script src="/glimpse/player.js"></script>
+  <script src="app.js" defer></script>
+</body>
+</html>
