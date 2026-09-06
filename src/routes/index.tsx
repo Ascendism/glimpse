@@ -52,6 +52,7 @@ function Index() {
   const [chatInput, setChatInput] = useState("");
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
   const [delays, setDelays] = useState<Record<string, number>>({});
+  const [copySuccess, setCopySuccess] = useState(false);
   const pollInterval = useRef<number | null>(null);
 
   const currentPlayer = gameState?.players.find((p) => p.id === playerId);
@@ -178,6 +179,14 @@ function Index() {
     }
   };
 
+  const copyJoinLink = () => {
+    const url = `${window.location.origin}/?table=${tableId}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    });
+  };
+
   // Lobby: create or join
   if (!tableId || !playerId) {
     return (
@@ -271,9 +280,30 @@ function Index() {
               </div>
             )}
           </div>
-          <div className="text-right">
-            <p className="text-xs text-white/40 uppercase tracking-wider">Table</p>
+          <div className="text-right space-y-1">
+            <p className="text-xs text-white/40 uppercase tracking-wider">Table Code</p>
             <p className="font-display text-2xl text-gold tracking-widest">{tableId}</p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={copyJoinLink}
+                className={cn(
+                  "rounded-full border px-3 py-1 text-xs font-display tracking-wider uppercase transition-colors",
+                  copySuccess
+                    ? "border-gold bg-gold/20 text-gold"
+                    : "border-white/25 text-white/70 hover:bg-white/10"
+                )}
+              >
+                {copySuccess ? "✓ Copied" : "Copy Join Link"}
+              </button>
+              <a
+                href={`/stage?table=${tableId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-full border border-white/25 px-3 py-1 text-xs font-display tracking-wider text-white/70 uppercase hover:bg-white/10 transition-colors"
+              >
+                Stage View
+              </a>
+            </div>
           </div>
         </header>
 
