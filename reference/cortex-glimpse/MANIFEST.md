@@ -68,9 +68,17 @@
 
 ## Total Files: 48
 
+## File Sizes
+
+- **lib/cortexGlimpse/**: 376KB (30 files)
+- **public/glimpse/**: 64KB (11 files)  
+- **data/cortex-skills/glimpse/**: 48KB (7 files)
+- **Total**: 516KB of implementation code
+
 ## Notes
 
 - No glimpse-specific test files were found in the `test/` directory
 - No glimpse-specific scripts were found in the `scripts/` directory (no glimpse-catalog-health.js or similar)
-- All files were downloaded directly from the GitHub raw content URLs
+- All files were downloaded using authenticated GitHub Contents API
 - File structure has been preserved exactly as it existed in the source repository
+- All files verified to contain real code (not 404 errors)
