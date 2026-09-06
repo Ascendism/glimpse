@@ -68,11 +68,27 @@ export const performHostAction = createServerFn(
     tableId,
     action,
     payload,
+    playerId,
   }: {
     tableId: string;
     action: string;
     payload?: Record<string, unknown>;
+    playerId?: string;
   }) => {
+    // Verify player is host (basic authorization)
+    const table = getTable(tableId);
+    if (!table) {
+      throw new Error("Table not found");
+    }
+    
+    // Check if playerId is provided and is host
+    if (playerId) {
+      const player = table.players.find((p) => p.id === playerId);
+      if (!player || !player.isHost) {
+        throw new Error("Unauthorized: Only host can perform this action");
+      }
+    }
+
     let success = false;
 
     switch (action) {

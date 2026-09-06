@@ -41,7 +41,7 @@ function StageView() {
   const fetchGameState = useCallback(async () => {
     if (!tableId) return;
     try {
-      const data = await fetchGameStateAction({ data: tableId });
+      const data = await fetchGameStateAction(tableId);
       setGameState(data.table);
 
       // Auto-reveal when phase is reveal
