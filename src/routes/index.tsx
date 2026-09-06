@@ -11,6 +11,7 @@ import {
   sendChatMessage as sendChatMessageAction,
   performHostAction,
 } from "@/lib/game-actions";
+import { getMatchHint } from "@/lib/match-helper";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -108,14 +109,16 @@ function Index() {
     }
   };
 
-  const submitGuess = async (e: React.FormEvent) => {
+  const submitGuess = async (e: React.FormEvent, lockIn: boolean = false) => {
     e.preventDefault();
-    if (!tableId || !playerId || !guessInput.trim() || gameState?.phase !== "playing")
+    if (!tableId || !playerId || !guessInput.trim() || gameState?.phase !== "playing" || gameState?.sessionPaused || currentPlayer?.lockedIn)
       return;
 
     try {
-      await submitGuessAction({ data: { tableId, playerId, text: guessInput.trim() } });
-      setGuessInput("");
+      await submitGuessAction({ data: { tableId, playerId, text: guessInput.trim(), locked: lockIn } });
+      if (lockIn) {
+        setGuessInput("");
+      }
     } catch (error) {
       console.error("Failed to submit guess:", error);
     }
@@ -165,6 +168,15 @@ function Index() {
   };
   const updateScore = (pId: string, score: number) =>
     hostAction("update_score", { playerId: pId, score });
+  const pauseSession = () => hostAction("pause_session");
+  const resumeSession = () => hostAction("resume_session");
+  const restartSession = () => {
+    if (confirm("Restart session? This will clear the current round and return to lobby.")) {
+      hostAction("restart_session");
+      setRevealed(new Set());
+      setDelays({});
+    }
+  };
 
   // Lobby: create or join
   if (!tableId || !playerId) {
@@ -253,6 +265,11 @@ function Index() {
             <h1 className="text-gold-gradient font-display text-3xl tracking-[0.12em] sm:text-5xl">
               GLIMPSE
             </h1>
+            {gameState?.sessionPaused && (
+              <div className="rounded-full border-2 border-gold bg-gold/20 px-4 py-1 font-display text-xl tracking-wider text-gold uppercase animate-pulse">
+                PAUSED
+              </div>
+            )}
           </div>
           <div className="text-right">
             <p className="text-xs text-white/40 uppercase tracking-wider">Table</p>
@@ -285,39 +302,67 @@ function Index() {
             )}
 
             {gameState?.phase === "playing" && (
-              <form onSubmit={submitGuess} className="flex gap-2">
+              <form onSubmit={(e) => submitGuess(e, false)} className="flex gap-2">
                 <Input
                   value={guessInput}
                   onChange={(e) => setGuessInput(e.target.value)}
-                  placeholder="Type your guess..."
-                  className="flex-1 rounded-full border-white/15 bg-white/5 px-4 py-3 text-lg placeholder:text-white/35"
+                  placeholder={
+                    gameState.sessionPaused
+                      ? "Session paused..."
+                      : currentPlayer?.lockedIn
+                        ? "Locked in — waiting for judging..."
+                        : "Type your guess..."
+                  }
+                  disabled={gameState.sessionPaused || currentPlayer?.lockedIn}
+                  className="flex-1 rounded-full border-white/15 bg-white/5 px-4 py-3 text-lg placeholder:text-white/35 disabled:opacity-50"
                 />
-                <Button
-                  type="submit"
-                  className="rounded-full bg-gradient-to-b from-gold to-gold-deep px-8 py-3 font-display text-lg uppercase"
-                >
-                  Guess
-                </Button>
+                {!currentPlayer?.lockedIn && !gameState.sessionPaused && (
+                  <>
+                    <Button
+                      type="submit"
+                      disabled={!guessInput.trim()}
+                      className="rounded-full border border-white/25 px-6 py-3 font-display text-lg uppercase"
+                    >
+                      Update
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={(e) => submitGuess(e, true)}
+                      disabled={!guessInput.trim()}
+                      className="rounded-full bg-gradient-to-b from-gold to-gold-deep px-6 py-3 font-display text-lg uppercase"
+                    >
+                      Lock In
+                    </Button>
+                  </>
+                )}
               </form>
             )}
 
-            {gameState?.phase === "judging" && gameState.guesses.length > 0 && (
+            {gameState?.phase === "judging" && gameState.guesses.length > 0 && currentClip && (
               <div className="rounded-xl border border-white/10 bg-black/25 p-4 space-y-2">
                 <h3 className="font-display text-xl text-gold uppercase tracking-wider">
-                  Guesses
+                  Guesses {isHost && "— Judge & Award Points"}
                 </h3>
                 <div className="space-y-1 max-h-60 overflow-y-auto">
-                  {gameState.guesses.map((g) => (
-                    <div
-                      key={g.id}
-                      className="flex items-center justify-between rounded-lg border border-white/5 bg-white/5 px-3 py-2"
-                    >
-                      <span className="text-sm">
-                        <span className="font-semibold text-gold">{g.playerName}:</span>{" "}
-                        {g.text}
-                      </span>
-                    </div>
-                  ))}
+                  {gameState.guesses.map((g) => {
+                    const hint = getMatchHint(g.text, currentClip.title);
+                    return (
+                      <div
+                        key={g.id}
+                        className="flex items-center justify-between rounded-lg border border-white/5 bg-white/5 px-3 py-2"
+                      >
+                        <span className="text-sm flex-1">
+                          <span className="font-semibold text-gold">{g.playerName}:</span>{" "}
+                          {g.text}
+                        </span>
+                        {hint && (
+                          <span className="text-xs font-mono text-gold/80 ml-2">
+                            {hint}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -347,9 +392,20 @@ function Index() {
                   </div>
                 )}
                 {gameState?.phase === "playing" && (
-                  <Button onClick={lockGuesses} className="w-full rounded-full">
-                    Lock Guesses
-                  </Button>
+                  <>
+                    {gameState.sessionPaused ? (
+                      <Button onClick={resumeSession} className="w-full rounded-full bg-gold/90">
+                        Resume Session
+                      </Button>
+                    ) : (
+                      <Button onClick={pauseSession} className="w-full rounded-full border border-white/25">
+                        Pause Session
+                      </Button>
+                    )}
+                    <Button onClick={lockGuesses} disabled={gameState.sessionPaused} className="w-full rounded-full">
+                      Lock Guesses
+                    </Button>
+                  </>
                 )}
                 {gameState?.phase === "judging" && (
                   <Button onClick={revealTitle} className="w-full rounded-full">
@@ -361,6 +417,14 @@ function Index() {
                     Next Round
                   </Button>
                 )}
+                {gameState?.phase !== "lobby" && (
+                  <Button
+                    onClick={restartSession}
+                    className="w-full rounded-full border border-white/15 text-white/60 hover:bg-white/5"
+                  >
+                    Restart Session
+                  </Button>
+                )}
               </div>
             )}
 
@@ -368,9 +432,21 @@ function Index() {
               <h3 className="font-display text-lg text-gold uppercase tracking-wider">Chat</h3>
               <div className="space-y-1 max-h-40 overflow-y-auto">
                 {gameState?.chat.map((msg) => (
-                  <div key={msg.id} className="text-sm">
-                    <span className="font-semibold text-gold">{msg.playerName}:</span>{" "}
-                    <span className="text-white/80">{msg.text}</span>
+                  <div
+                    key={msg.id}
+                    className={cn(
+                      "text-sm",
+                      msg.isSystem && "text-center text-white/50 italic text-xs my-1"
+                    )}
+                  >
+                    {msg.isSystem ? (
+                      <span>{msg.text}</span>
+                    ) : (
+                      <>
+                        <span className="font-semibold text-gold">{msg.playerName}:</span>{" "}
+                        <span className="text-white/80">{msg.text}</span>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
@@ -394,11 +470,23 @@ function Index() {
               {gameState?.players.map((p) => (
                 <div
                   key={p.id}
-                  className="flex items-center justify-between rounded-lg border border-white/5 bg-white/5 px-3 py-2"
+                  className={cn(
+                    "flex items-center justify-between rounded-lg border px-3 py-2",
+                    p.lockedIn
+                      ? "border-gold/40 bg-gold/10"
+                      : "border-white/5 bg-white/5"
+                  )}
                 >
                   <div>
-                    <div className="font-semibold text-white">
-                      {p.name} {p.isHost && <span className="text-xs text-gold">(HOST)</span>}
+                    <div className="font-semibold text-white flex items-center gap-2">
+                      <span>
+                        {p.name} {p.isHost && <span className="text-xs text-gold">(HOST)</span>}
+                      </span>
+                      {p.lockedIn && (
+                        <span className="text-xs rounded-full border border-gold/40 bg-gold/20 px-2 py-0.5 text-gold uppercase tracking-wider">
+                          Locked
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-white/50">Score: {p.score}</div>
                   </div>

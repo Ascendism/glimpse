@@ -11,6 +11,9 @@ import {
   revealTitle as revealTitleInMemory,
   resetRound as resetRoundInMemory,
   setClipState as setClipStateInMemory,
+  pauseSession as pauseSessionInMemory,
+  resumeSession as resumeSessionInMemory,
+  restartSession as restartSessionInMemory,
 } from "./game-state";
 
 export const createTable = createServerFn("POST", async () => {
@@ -39,8 +42,8 @@ export const joinTable = createServerFn(
 
 export const submitGuess = createServerFn(
   "POST",
-  async ({ tableId, playerId, text }: { tableId: string; playerId: string; text: string }) => {
-    const success = addGuessInMemory(tableId, playerId, text);
+  async ({ tableId, playerId, text, locked }: { tableId: string; playerId: string; text: string; locked?: boolean }) => {
+    const success = addGuessInMemory(tableId, playerId, text, locked ?? false);
     if (!success) {
       throw new Error("Failed to add guess");
     }
@@ -94,6 +97,15 @@ export const performHostAction = createServerFn(
           payload?.playing as boolean,
           payload?.position as number,
         );
+        break;
+      case "pause_session":
+        success = pauseSessionInMemory(tableId);
+        break;
+      case "resume_session":
+        success = resumeSessionInMemory(tableId);
+        break;
+      case "restart_session":
+        success = restartSessionInMemory(tableId);
         break;
       default:
         throw new Error("Unknown action");
