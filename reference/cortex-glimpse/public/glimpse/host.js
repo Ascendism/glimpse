@@ -1,186 +1,486 @@
 'use strict';
 
-const socket = io();
-let roomCode = null;
-let gameState = null;
+const STORE = 'glimpse.host.v1';
+const state = { roomId: '', joinUrl: '', stageUrl: '', hostId: 'host', huntBusy: false };
 
-// Initialize host
-socket.on('connect', () => {
-  console.log('Connected to server');
-  socket.emit('create-room');
-});
+function $(id) {
+  return document.getElementById(id);
+}
 
-socket.on('room-created', (data) => {
-  roomCode = data.roomCode;
-  document.getElementById('room-code').textContent = roomCode;
-  console.log('Room created:', roomCode);
-});
+function esc(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
 
-socket.on('room-state', (state) => {
-  gameState = state;
-  updateDisplay(state);
-});
-
-socket.on('player-joined', (data) => {
-  console.log('Player joined:', data.playerName);
-  updateStatusMessage(`${data.playerName} joined the game`);
-});
-
-socket.on('player-left', (data) => {
-  console.log('Player left:', data.playerName);
-  updateStatusMessage(`${data.playerName} left the game`);
-});
-
-socket.on('round-start', (data) => {
-  console.log('Round started:', data);
-  updateVideoPlayer(data.clip);
-  document.getElementById('next-round-btn').style.display = 'none';
-});
-
-socket.on('round-end', (data) => {
-  console.log('Round ended:', data);
-  displayRoundResults(data);
-  document.getElementById('next-round-btn').style.display = 'block';
-});
-
-socket.on('game-over', (data) => {
-  console.log('Game over:', data);
-  displayFinalResults(data);
-  document.getElementById('start-game-btn').style.display = 'block';
-  document.getElementById('next-round-btn').style.display = 'none';
-  document.getElementById('end-game-btn').style.display = 'none';
-});
-
-socket.on('error', (error) => {
-  console.error('Socket error:', error);
-  updateStatusMessage(`Error: ${error.message}`);
-});
-
-// UI event handlers
-document.getElementById('start-game-btn').addEventListener('click', () => {
-  if (roomCode) {
-    socket.emit('start-game', { roomCode });
-    document.getElementById('start-game-btn').style.display = 'none';
-    document.getElementById('end-game-btn').style.display = 'block';
+async function api(method, url, body) {
+  let res;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    });
+  } catch (e) {
+    return { ok: false, message: (e && e.message) || 'network failed' };
   }
-});
-
-document.getElementById('next-round-btn').addEventListener('click', () => {
-  if (roomCode) {
-    socket.emit('next-round', { roomCode });
+  const text = await res.text();
+  let j = null;
+  try {
+    j = text ? JSON.parse(text) : {};
+  } catch {
+    const scraped = String(text || '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 180);
+    return { ok: false, message: scraped || `HTTP ${res.status}` };
   }
-});
-
-document.getElementById('end-game-btn').addEventListener('click', () => {
-  if (roomCode) {
-    socket.emit('end-game', { roomCode });
+  if (!j || typeof j !== 'object') return { ok: false, message: `HTTP ${res.status}` };
+  if (!res.ok && j.ok !== false) {
+    return { ok: false, message: j.message || `HTTP ${res.status}`, ...j };
   }
-});
+  return j;
+}
 
-// Display update functions
-function updateDisplay(state) {
-  updatePlayerList(state.players);
-  updateGameStatus(state);
-  
-  if (state.players.length > 0) {
-    document.getElementById('start-game-btn').disabled = false;
+function setStatus(text, ok) {
+  const el = $('ce-status');
+  if (!el) return;
+  el.textContent = text;
+  el.dataset.state = ok ? 'ok' : 'unknown';
+}
+
+function needTable() {
+  if (state.roomId) return true;
+  setStatus('Create a table first', false);
+  return false;
+}
+
+function persist() {
+  localStorage.setItem(STORE, JSON.stringify({ roomId: state.roomId, hostId: state.hostId }));
+}
+
+function renderRoom(room) {
+  if (!room) return;
+  const box = $('ce-players');
+  const people = room.players || room.scores || [];
+  if (box) {
+    box.innerHTML = people
+      .map((p) => {
+        const locked = (room.lockedIds || []).indexOf(p.playerId) >= 0;
+        const last = (room.lastScores || []).find((s) => s.playerId === p.playerId);
+        const isCurrentHost = p.playerId === room.hostId;
+        const cls = [
+          'gl-play-seat',
+          p.ready ? 'is-ready' : '',
+          locked && room.phase !== 'reveal' ? 'is-locked' : '',
+          room.phase === 'reveal' && last && last.acceptable ? 'is-hit' : '',
+          room.phase === 'reveal' && last && !last.acceptable ? 'is-miss' : ''
+        ]
+          .filter(Boolean)
+          .join(' ');
+        const badges = [
+          isCurrentHost ? '<span class="gl-badge gl-badge-host">HOST</span>' : '',
+          p.ready ? '<span class="gl-badge gl-badge-ready">READY</span>' : ''
+        ]
+          .filter(Boolean)
+          .join(' ');
+        const actions = isCurrentHost
+          ? ''
+          : `<button type="button" class="gl-seat-btn gl-kick" data-player="${esc(p.playerId)}" title="Kick player">✕</button>
+             <button type="button" class="gl-seat-btn gl-promote" data-player="${esc(p.playerId)}" title="Promote to host">⬆</button>`;
+        return `<div class="${cls}">
+          <div class="gl-seat-info">
+            <span>${esc(p.displayName || p.playerId)}</span>
+            ${badges}
+          </div>
+          <div class="gl-seat-actions">
+            <strong>${p.score || 0}</strong>
+            ${actions}
+          </div>
+        </div>`;
+      })
+      .join('');
+  }
+  const r = room.round;
+  if ($('ce-round')) {
+    $('ce-round').textContent = r
+      ? `Round ${r.index || ''} · ${room.phase} · sample ${(Number(r.clipIndex) || 0) + 1} · ${room.lockedCount || 0}/${people.length} in`
+      : `Phase: ${room.phase || 'lobby'} · ${people.length} seated`;
+  }
+  if ($('ce-start')) $('ce-start').textContent = room.phase === 'reveal' ? 'Next round' : 'Start round';
+  const confirm = $('ce-confirm');
+  if (confirm) {
+    confirm.disabled = !(room.phase === 'lobby' && room.allReady);
+    confirm.textContent = room.phase === 'countdown' ? 'Counting down' : 'Confirm';
+  }
+  if (room.inviteCode && $('ce-code')) $('ce-code').textContent = room.inviteCode;
+  const nudge = $('ce-nudge');
+  if (nudge) {
+    if (room.nudges && room.nudges.length) {
+      nudge.classList.remove('hidden');
+      nudge.textContent =
+        room.nudges.map((n) => n.displayName).join(', ') +
+        (room.nudges.length === 1 ? ' wants another clip' : ' want another clip');
+    } else {
+      nudge.classList.add('hidden');
+      nudge.textContent = '';
+    }
   }
 }
 
-function updatePlayerList(players) {
-  const playerList = document.getElementById('player-list');
-  playerList.innerHTML = '';
-  
-  players.forEach(player => {
-    const playerCard = document.createElement('div');
-    playerCard.className = 'player-card';
-    playerCard.innerHTML = `
-      <div class="player-name">${player.name}</div>
-      <div class="player-score">${player.score || 0} pts</div>
-    `;
-    playerList.appendChild(playerCard);
+function paintQueue(rows) {
+  const list = $('ce-queue-list') || $('ce-queue');
+  if (!list || !Array.isArray(rows)) return;
+  const fp = rows.map((q) => `${q.title || ''}|${q.intent || ''}|${q.type || ''}`).join('\n');
+  if (list.dataset.fp === fp) return;
+  list.dataset.fp = fp;
+  list.innerHTML = rows
+    .map((q) => `<div class="gl-q"><div>${esc(q.title)}<br><small>${esc(q.intent)} · ${esc(q.type)}</small></div></div>`)
+    .join('');
+}
+
+function applyTransport(room, clipPlay) {
+  const mount = $('ce-clip');
+  const idle = $('ce-preview-idle');
+  if (!mount || !window.GlimpsePlayer) return;
+  if (clipPlay && room && room.phase === 'playing') {
+    const key = String(room.round && room.round.playAt) + ':' + String(room.round && room.round.clipIndex);
+    if (state.clipKey !== key) {
+      state.clipKey = key;
+      if (idle) idle.classList.add('hidden');
+      window.GlimpsePlayer.play(mount, clipPlay).then(function (player) {
+        if (!player || player.__glTransportBound) return;
+        player.__glTransportBound = true;
+        player.on('pause', function () {
+          if (state.ignoringTransport || !state.roomId) return;
+          api('POST', `/api/glimpse/rooms/${state.roomId}/transport`, { paused: true });
+        });
+        player.on('play', function () {
+          if (state.ignoringTransport || !state.roomId) return;
+          api('POST', `/api/glimpse/rooms/${state.roomId}/transport`, { paused: false });
+        });
+      });
+    }
+  }
+  state.ignoringTransport = true;
+  if (room && room.paused) window.GlimpsePlayer.pause(mount);
+  else if (room && room.phase === 'playing') window.GlimpsePlayer.resume(mount);
+  setTimeout(function () {
+    state.ignoringTransport = false;
+  }, 80);
+}
+
+// Auto-recovery: listen for player errors and swap to another clip
+window.addEventListener('glimpse-player-error', async function (e) {
+  if (!state.roomId || state.recovering) return;
+  state.recovering = true;
+  setStatus('Video unavailable — switching clip', false);
+  try {
+    const j = await api('POST', `/api/glimpse/rooms/${state.roomId}/escalate`, {});
+    if (j.ok) {
+      setStatus(`Switched to clip ${(j.clipIndex || 0) + 1}`, true);
+      refresh();
+    } else {
+      setStatus('Could not recover — try Another clip button', false);
+    }
+  } catch {
+    setStatus('Recovery failed', false);
+  } finally {
+    setTimeout(function () {
+      state.recovering = false;
+    }, 2000);
+  }
+});
+
+async function refresh() {
+  if (!state.roomId) return;
+  const j = await api('GET', `/api/glimpse/rooms/${state.roomId}`);
+  if (!j.ok) return;
+  renderRoom(j.room);
+  paintQueue(j.queue);
+  state.phase = j.room && j.room.phase;
+  applyTransport(j.room, j.clipPlay);
+  if (j.joinUrl) {
+    state.joinUrl = j.phoneUrl || j.joinUrl;
+    state.phoneUrl = j.phoneUrl || j.joinUrl;
+    state.stageUrl = j.stageUrl || `${state.joinUrl.replace(/\/$/, '')}/stage`;
+    if (j.inviteToken) state.inviteToken = j.inviteToken;
+    if ($('ce-link')) $('ce-link').textContent = state.joinUrl;
+  }
+}
+
+async function adopt(j) {
+  state.roomId = j.roomId;
+  state.joinUrl = j.phoneUrl || j.joinUrl;
+  state.phoneUrl = j.phoneUrl || j.joinUrl;
+  state.stageUrl = j.stageUrl || `${String(state.joinUrl || '').replace(/\/$/, '')}/stage`;
+  state.inviteToken = j.inviteToken || '';
+  persist();
+  if ($('ce-link')) $('ce-link').textContent = state.joinUrl;
+  setStatus('Table live', true);
+  renderRoom(j.room || j);
+  paintQueue(j.queue);
+}
+
+$('ce-players').onclick = async (ev) => {
+  const kickBtn = ev.target.closest('.gl-kick');
+  const promoteBtn = ev.target.closest('.gl-promote');
+  if (!state.roomId) return;
+  if (kickBtn) {
+    const playerId = kickBtn.getAttribute('data-player');
+    if (!playerId) return;
+    const j = await api('POST', `/api/glimpse/rooms/${state.roomId}/kick`, {
+      playerId,
+      callerId: state.hostId
+    });
+    setStatus(j.ok ? 'Player kicked' : j.message, j.ok);
+    if (j.ok) refresh();
+  } else if (promoteBtn) {
+    const playerId = promoteBtn.getAttribute('data-player');
+    if (!playerId) return;
+    const j = await api('POST', `/api/glimpse/rooms/${state.roomId}/promote`, {
+      playerId,
+      callerId: state.hostId
+    });
+    setStatus(j.ok ? 'Host promoted' : j.message, j.ok);
+    if (j.ok) {
+      state.hostId = playerId;
+      persist();
+      if (j.room) renderRoom(j.room);
+      refresh();
+    }
+  }
+};
+
+$('ce-create').onclick = async () => {
+  try {
+    const catalog = parseCatalog();
+    const match = matchingOf();
+    const j = await api('POST', '/api/glimpse/rooms', {
+      hostId: state.hostId,
+      pool: catalog.pool,
+      era: catalog.era || undefined,
+      challenge: match.challenge,
+      acceptance: match.acceptance
+    });
+    if (!j.ok) {
+      setStatus(j.message || 'failed', false);
+      return;
+    }
+    adopt(j);
+  } catch (e) {
+    setStatus((e && e.message) || 'failed', false);
+  }
+};
+
+function parseCatalog() {
+  const raw = String(($('ce-catalog') && $('ce-catalog').value) || 'mixed');
+  const parts = raw.split('|');
+  return { pool: parts[0] || 'mixed', era: parts[1] || '' };
+}
+
+function matchingOf() {
+  const v = String(($('ce-match') && $('ce-match').value) || 'close_enough');
+  if (v === 'exact') return { challenge: 'exact', acceptance: 'exact' };
+  return { challenge: 'close_enough', acceptance: 'normal' };
+}
+
+async function fillCatalog() {
+  const sel = $('ce-catalog');
+  if (!sel) return;
+  try {
+    const j = await api('GET', '/api/glimpse/catalog?pool=mixed');
+    const eras = (j.facets && j.facets.eras) || [];
+    const groups = [
+      ['mixed', 'Mixed'],
+      ['movies', 'Movies'],
+      ['television', 'TV shows'],
+      ['music', 'Music']
+    ];
+    const cur = sel.value;
+    let html = '';
+    for (let i = 0; i < groups.length; i += 1) {
+      const pool = groups[i][0];
+      const label = groups[i][1];
+      html += '<option value="' + pool + '">' + label + ' (any era)</option>';
+      for (let e = 0; e < eras.length; e += 1) {
+        const era = eras[e];
+        html +=
+          '<option value="' + pool + '|' + era + '">' + label + ' (' + era + ')</option>';
+      }
+    }
+    sel.innerHTML = html;
+    if (cur) sel.value = cur;
+  } catch {
+    /* keep static options */
+  }
+}
+
+async function copy(text, label) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus(label, true);
+  } catch {
+    setStatus(text, true);
+  }
+}
+
+$('ce-copy').onclick = () => {
+  if (!state.phoneUrl && !state.joinUrl) {
+    setStatus('Create a table first', false);
+    return;
+  }
+  copy(state.phoneUrl || state.joinUrl, 'Phone join URL copied');
+};
+
+$('ce-confirm').onclick = async () => {
+  if (!needTable()) return;
+  const j = await api('POST', `/api/glimpse/rooms/${state.roomId}/confirm`, {});
+  setStatus(j.ok ? 'Countdown' : j.message, j.ok);
+  refresh();
+};
+
+$('ce-start').onclick = async () => {
+  if (!needTable()) return;
+  const j = await api('POST', `/api/glimpse/rooms/${state.roomId}/start`, {});
+  setStatus(j.ok ? 'Live' : j.message, j.ok);
+  refresh();
+};
+
+$('ce-escalate').onclick = async () => {
+  if (!needTable()) return;
+  const j = await api('POST', `/api/glimpse/rooms/${state.roomId}/escalate`, {});
+  setStatus(j.ok ? `Clip ${(j.clipIndex || 0) + 1}` : j.message, j.ok);
+  refresh();
+};
+
+$('ce-lock').onclick = async () => {
+  if (!needTable()) return;
+  const j = await api('POST', `/api/glimpse/rooms/${state.roomId}/lock`, {});
+  setStatus(j.ok ? 'Locked' : j.message, j.ok);
+  refresh();
+};
+
+$('ce-queue').onclick = async () => {
+  if (!needTable()) return;
+  const j = await api('POST', `/api/glimpse/rooms/${state.roomId}/queue`, { count: 8 });
+  if (!j.ok) return;
+  paintQueue(j.queue);
+};
+
+function huntFlingNote(j) {
+  const fling = j && j.fling && typeof j.fling === 'object' ? j.fling : null;
+  if (!fling || !fling.attempted) return '';
+  if (!fling.ok) {
+    if (fling.code === 'fling_offline') {
+      return 'Fling is offline — searched YouTube without the browser.';
+    }
+    return `Fling hunt failed (${fling.error || fling.code || 'error'}) — searched YouTube without the browser.`;
+  }
+  if (j.via !== 'fling') {
+    return 'Fling opened a tab but found nothing — searched YouTube without the browser.';
+  }
+  return '';
+}
+
+function paintHunt(j) {
+  const out = $('ce-hunt-out');
+  if (!out) return;
+  const items = Array.isArray(j.items) ? j.items : [];
+  const note = huntFlingNote(j);
+  const query = String(j.query || '').trim();
+  if (!items.length) {
+    out.innerHTML = `<p class="gl-link">${esc(
+      note || (query ? `No clips for "${query}". Try Find more again.` : 'No clips. Try Find more again.')
+    )}</p>`;
+    return;
+  }
+  out.innerHTML =
+    (note ? `<p class="gl-link">${esc(note)}</p>` : '') +
+    (query ? `<p class="gl-link">${esc(query)}</p>` : '') +
+    items
+      .map(
+        (it) =>
+          `<button type="button" class="gl-q" data-item="${esc(it.id)}"><div>${esc(it.title)}<br><small>${esc(it.type)} · play this</small></div></button>`
+      )
+      .join('');
+  out.onclick = async (ev) => {
+    const btn = ev.target.closest('[data-item]');
+    if (!btn || !state.roomId) return;
+    const started = await api('POST', `/api/glimpse/rooms/${state.roomId}/start`, {
+      itemId: btn.getAttribute('data-item')
+    });
+    setStatus(started.ok ? 'Live' : started.message, started.ok);
+    refresh();
+  };
+}
+
+async function refreshFlingHint() {
+  const hint = $('ce-fling-hint');
+  if (!hint) return;
+  const j = await api('GET', '/api/fling/extension/status');
+  if (j && j.ok && j.online) {
+    hint.textContent = 'Fling online · hunt uses a background tab';
+    return;
+  }
+  hint.textContent = 'Fling offline · pair the extension before checking this';
+}
+
+$('ce-hunt').onclick = async () => {
+  if (!needTable()) return;
+  if (state.huntBusy) return;
+  const btn = $('ce-hunt');
+  state.huntBusy = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Hunting…';
+  }
+  setStatus('Hunting…', true);
+  try {
+    const j = await api('POST', `/api/glimpse/rooms/${state.roomId}/hunt`, {
+      use_fling: $('ce-fling') && $('ce-fling').checked
+    });
+    if (!j.ok) {
+      setStatus(j.message || 'hunt failed', false);
+      paintHunt({ items: [], query: '', fling: j.fling });
+      return;
+    }
+    const n = Array.isArray(j.items) ? j.items.length : 0;
+    const note = huntFlingNote(j);
+    setStatus(note || `Found ${n} via ${j.via === 'fling' ? 'Fling' : 'YouTube search'}`, n > 0 && !note);
+    paintHunt(j);
+  } finally {
+    state.huntBusy = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Find more on YouTube';
+    }
+  }
+};
+
+if ($('ce-fling')) {
+  $('ce-fling').addEventListener('change', () => {
+    void refreshFlingHint();
   });
 }
 
-function updateGameStatus(state) {
-  const statusDisplay = document.getElementById('status-display');
-  
-  if (state.status === 'waiting') {
-    statusDisplay.textContent = `Waiting for players... (${state.players.length} joined)`;
-  } else if (state.status === 'playing') {
-    statusDisplay.textContent = `Round ${state.currentRound}/${state.totalRounds}`;
-  } else if (state.status === 'ended') {
-    statusDisplay.textContent = 'Game Over';
-  }
-}
-
-function updateStatusMessage(message) {
-  const statusDisplay = document.getElementById('status-display');
-  const currentText = statusDisplay.textContent;
-  statusDisplay.textContent = message;
-  
-  setTimeout(() => {
-    if (statusDisplay.textContent === message) {
-      statusDisplay.textContent = currentText;
+(async function boot() {
+  await fillCatalog();
+  void refreshFlingHint();
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE) || 'null');
+    if (saved && saved.roomId) {
+      state.roomId = saved.roomId;
+      state.hostId = saved.hostId || 'host';
+      await refresh();
+      if (state.joinUrl) setStatus('Table resumed', true);
     }
-  }, 3000);
-}
-
-function updateVideoPlayer(clip) {
-  const videoArea = document.getElementById('video-area');
-  const videoPlayer = document.getElementById('video-player');
-  
-  if (clip && clip.videoId) {
-    videoArea.style.display = 'block';
-    videoPlayer.innerHTML = `
-      <iframe
-        src="https://www.youtube.com/embed/${clip.videoId}?start=${clip.startTime}&end=${clip.endTime}&autoplay=1"
-        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-        allowfullscreen
-      ></iframe>
-    `;
-  } else {
-    videoArea.style.display = 'none';
+  } catch {
+    /* first open */
   }
-}
+})();
 
-function displayRoundResults(data) {
-  const resultsDiv = document.getElementById('round-results');
-  const resultsList = document.getElementById('results-list');
-  
-  resultsDiv.style.display = 'block';
-  resultsList.innerHTML = '<h3>Correct Answer: ' + data.correctAnswer + '</h3>';
-  
-  if (data.guesses && data.guesses.length > 0) {
-    const guessesHtml = data.guesses.map(guess => `
-      <div class="guess-result">
-        <strong>${guess.playerName}:</strong> ${guess.guess}
-        ${guess.correct ? '✓' : '✗'}
-        (+${guess.points} pts)
-      </div>
-    `).join('');
-    resultsList.innerHTML += guessesHtml;
-  } else {
-    resultsList.innerHTML += '<p>No guesses this round</p>';
-  }
-}
-
-function displayFinalResults(data) {
-  const resultsDiv = document.getElementById('round-results');
-  const resultsList = document.getElementById('results-list');
-  
-  resultsDiv.style.display = 'block';
-  resultsList.innerHTML = '<h2>Final Results</h2>';
-  
-  const sortedPlayers = [...data.players].sort((a, b) => b.score - a.score);
-  
-  const playersHtml = sortedPlayers.map((player, index) => `
-    <div class="player-result">
-      <span class="rank">#${index + 1}</span>
-      <span class="name">${player.name}</span>
-      <span class="score">${player.score} pts</span>
-    </div>
-  `).join('');
-  
-  resultsList.innerHTML += playersHtml;
-}
+setInterval(refresh, 2000);
