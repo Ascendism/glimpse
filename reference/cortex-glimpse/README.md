@@ -21,6 +21,7 @@ The original Glimpse implementation in CarapaceUDE/cortex consisted of:
 
 - `lib/cortexGlimpse/` - Core game logic, room management, catalog handling, Discord auth, and backend services
 - `public/glimpse/` - Client-side code, UI components, HTML pages, and styles
+- `data/cortex-skills/glimpse/` - Cortex skill pack with UI contract and profile configuration
 
 ## What This Contains
 
@@ -41,6 +42,12 @@ This reference copy includes:
    - Stage and on-air components (stage.html, boardStage.js, onair.js)
    - Video synchronization (videoSync.js)
    - Archive board functionality (archiveBoard.js)
+
+3. **Skill Pack** (`data/cortex-skills/glimpse/`):
+   - Cortex skill definition (SKILL.md)
+   - Skill instructions and profile configuration (instructions.md, profile.json)
+   - Skill execution script (script.js)
+   - Skill UI components (ui/app.js, ui/index.html, ui/style.css)
 
 ## Source Repository
 

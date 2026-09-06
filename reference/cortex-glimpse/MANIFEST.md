@@ -56,12 +56,21 @@
 - `public/glimpse/stage.html`
 - `public/glimpse/videoSync.js`
 
-## Total Files: 41
+### data/cortex-skills/glimpse/ (7 files)
+
+- `data/cortex-skills/glimpse/SKILL.md`
+- `data/cortex-skills/glimpse/instructions.md`
+- `data/cortex-skills/glimpse/profile.json`
+- `data/cortex-skills/glimpse/script.js`
+- `data/cortex-skills/glimpse/ui/app.js`
+- `data/cortex-skills/glimpse/ui/index.html`
+- `data/cortex-skills/glimpse/ui/style.css`
+
+## Total Files: 48
 
 ## Notes
 
 - No glimpse-specific test files were found in the `test/` directory
 - No glimpse-specific scripts were found in the `scripts/` directory (no glimpse-catalog-health.js or similar)
-- No Glimpse skill pack was found in the repository
 - All files were downloaded directly from the GitHub raw content URLs
 - File structure has been preserved exactly as it existed in the source repository
