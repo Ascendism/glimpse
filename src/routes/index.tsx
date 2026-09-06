@@ -1,23 +1,37 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PuzzleBoard } from "@/components/PuzzleBoard";
-import { ALPHABET, PUZZLES, VOWELS, layoutPhrase, type Cell } from "@/lib/puzzle";
+import { GLIMPSE_CLIPS, layoutPhrase, type Cell } from "@/lib/puzzle";
+import type { GameState } from "@/lib/game-state";
+import {
+  createTable as createTableAction,
+  fetchGameState as fetchGameStateAction,
+  joinTable as joinTableAction,
+  submitGuess as submitGuessAction,
+  sendChatMessage as sendChatMessageAction,
+  performHostAction,
+} from "@/lib/game-actions";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 export const Route = createFileRoute("/")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    table: typeof search.table === "string" ? search.table : undefined,
+  }),
   head: () => ({
     meta: [
-      { title: "Puzzle Board — Wheel of Fortune Style Game Show Board" },
+      { title: "Glimpse — Identify the Clip Party Game" },
       {
         name: "description",
         content:
-          "An animated game show puzzle board: load any word or phrase and flip letters open square by square, just like the classic wheel game.",
+          "Multiplayer party game: identify movies, TV shows, and songs from clips. Play together in real-time.",
       },
-      { property: "og:title", content: "Puzzle Board — Game Show Letter Board" },
+      { property: "og:title", content: "Glimpse — Clip Identification Game" },
       {
         property: "og:description",
         content:
-          "Animated flip-tile puzzle board that loads random words and phrases and reveals letters one square at a time.",
+          "Real-time multiplayer game where you guess movies, TV shows, and songs from clips.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -26,209 +40,389 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
-function usePuzzle() {
-  const [index, setIndex] = useState(0);
-  const [custom, setCustom] = useState<{ category: string; phrase: string } | null>(null);
-  const puzzle = custom ?? PUZZLES[index % PUZZLES.length] ?? PUZZLES[0]!;
-  return { puzzle, setIndex, setCustom, index };
-}
-
 function Index() {
-  const { puzzle, setIndex, setCustom } = usePuzzle();
+  const navigate = useNavigate();
+  const { table: tableIdFromUrl } = useSearch({ from: "/" });
+  const [tableId, setTableId] = useState<string | null>(tableIdFromUrl ?? null);
+  const [playerId, setPlayerId] = useState<string | null>(null);
+  const [playerName, setPlayerName] = useState("");
+  const [gameState, setGameState] = useState<GameState | null>(null);
+  const [guessInput, setGuessInput] = useState("");
+  const [chatInput, setChatInput] = useState("");
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
   const [delays, setDelays] = useState<Record<string, number>>({});
-  const [used, setUsed] = useState<Set<string>>(new Set());
-  const [message, setMessage] = useState("Pick a letter to reveal it across the board.");
-  const [input, setInput] = useState("");
-  const [categoryInput, setCategoryInput] = useState("");
-  const timers = useRef<number[]>([]);
+  const pollInterval = useRef<number | null>(null);
 
-  const rows: Cell[][] = useMemo(() => layoutPhrase(puzzle.phrase), [puzzle.phrase]);
+  const currentPlayer = gameState?.players.find((p) => p.id === playerId);
+  const isHost = currentPlayer?.isHost ?? false;
+  const currentClip = gameState?.currentClipId
+    ? GLIMPSE_CLIPS.find((c) => c.id === gameState.currentClipId)
+    : null;
 
-  const totalLetters = useMemo(
-    () => rows.flat().filter((c) => c.kind === "letter").length,
-    [rows],
+  const rows: Cell[][] = useMemo(
+    () => (currentClip ? layoutPhrase(currentClip.title) : []),
+    [currentClip],
   );
-  const solved = revealed.size >= totalLetters && totalLetters > 0;
 
-  const clearTimers = () => {
-    timers.current.forEach((t) => window.clearTimeout(t));
-    timers.current = [];
+  const fetchGameState = useCallback(async () => {
+    if (!tableId) return;
+    try {
+      const data = await fetchGameStateAction({ data: tableId });
+      setGameState(data.table);
+    } catch (error) {
+      console.error("Failed to fetch game state:", error);
+    }
+  }, [tableId]);
+
+  useEffect(() => {
+    if (tableId) {
+      fetchGameState();
+      pollInterval.current = window.setInterval(fetchGameState, 1000);
+      return () => {
+        if (pollInterval.current) clearInterval(pollInterval.current);
+      };
+    }
+  }, [tableId, fetchGameState]);
+
+  const createTable = async () => {
+    try {
+      const data = await createTableAction();
+      setTableId(data.tableId);
+      navigate({ search: { table: data.tableId } });
+    } catch (error) {
+      console.error("Failed to create table:", error);
+    }
   };
-  useEffect(() => clearTimers, []);
 
-  const reset = useCallback(() => {
-    clearTimers();
-    setRevealed(new Set());
-    setDelays({});
-    setUsed(new Set());
-    setMessage("Pick a letter to reveal it across the board.");
-  }, []);
+  const joinTable = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tableId || !playerName.trim()) return;
 
-  const revealCells = useCallback((ids: string[], stagger = 220) => {
-    if (!ids.length) return;
-    const nextDelays: Record<string, number> = {};
-    ids.forEach((id, i) => (nextDelays[id] = i * stagger));
-    setDelays((d) => ({ ...d, ...nextDelays }));
-    setRevealed((prev) => new Set([...prev, ...ids]));
-  }, []);
-
-  const guess = useCallback(
-    (letter: string) => {
-      if (used.has(letter) || solved) return;
-      setUsed((u) => new Set([...u, letter]));
-      const hits: string[] = [];
-      rows.forEach((row, r) =>
-        row.forEach((cell, c) => {
-          if (cell.kind === "letter" && cell.char === letter) hits.push(`${r}-${c}`);
-        }),
-      );
-      if (hits.length) {
-        revealCells(hits);
-        setMessage(
-          `${hits.length} ${letter}${hits.length > 1 ? "'s" : ""}! ${VOWELS.includes(letter) ? "Vowel bought." : "Nice call."}`,
-        );
-      } else {
-        setMessage(`Sorry — no ${letter}. Bankrupt vibes.`);
+    try {
+      const data = await joinTableAction({ data: { tableId, playerName: playerName.trim() } });
+      if (data.player) {
+        setPlayerId(data.player.id);
       }
-    },
-    [rows, revealCells, solved, used],
-  );
+    } catch (error) {
+      console.error("Failed to join table:", error);
+    }
+  };
 
-  const revealAll = useCallback(() => {
+  const submitGuess = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tableId || !playerId || !guessInput.trim() || gameState?.phase !== "playing")
+      return;
+
+    try {
+      await submitGuessAction({ data: { tableId, playerId, text: guessInput.trim() } });
+      setGuessInput("");
+    } catch (error) {
+      console.error("Failed to submit guess:", error);
+    }
+  };
+
+  const sendChat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tableId || !playerId || !chatInput.trim()) return;
+
+    try {
+      await sendChatMessageAction({ data: { tableId, playerId, text: chatInput.trim() } });
+      setChatInput("");
+    } catch (error) {
+      console.error("Failed to send chat:", error);
+    }
+  };
+
+  const hostAction = async (action: string, payload: Record<string, unknown> = {}) => {
+    if (!tableId || !isHost) return;
+
+    try {
+      await performHostAction({ data: { tableId, action, payload } });
+    } catch (error) {
+      console.error("Failed to perform host action:", error);
+    }
+  };
+
+  const startRound = (clipId: string) => hostAction("start_round", { clipId });
+  const lockGuesses = () => hostAction("lock_guesses");
+  const revealTitle = () => {
+    hostAction("reveal_title");
     const ids: string[] = [];
     rows.forEach((row, r) =>
       row.forEach((cell, c) => {
-        if (cell.kind === "letter" && !revealed.has(`${r}-${c}`)) ids.push(`${r}-${c}`);
+        if (cell.kind === "letter") ids.push(`${r}-${c}`);
       }),
     );
-    revealCells(ids, 110);
-    setUsed(new Set(ALPHABET));
-    setMessage("Solved! The full puzzle is on the board.");
-  }, [revealCells, revealed, rows]);
-
-  const nextPuzzle = useCallback(() => {
-    reset();
-    setCustom(null);
-    setIndex(Math.floor(Math.random() * PUZZLES.length));
-  }, [reset, setCustom, setIndex]);
-
-  const loadCustom = (e: React.FormEvent) => {
-    e.preventDefault();
-    const phrase = input.trim();
-    if (!phrase) return;
-    reset();
-    setCustom({ category: categoryInput.trim() || "Custom Puzzle", phrase });
-    setInput("");
+    const nextDelays: Record<string, number> = {};
+    ids.forEach((id, i) => (nextDelays[id] = i * 110));
+    setDelays(nextDelays);
+    setRevealed(new Set(ids));
   };
+  const resetRound = () => {
+    hostAction("reset_round");
+    setRevealed(new Set());
+    setDelays({});
+  };
+  const updateScore = (pId: string, score: number) =>
+    hostAction("update_score", { playerId: pId, score });
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const el = document.activeElement;
-      if (el instanceof HTMLInputElement) return;
-      const k = e.key.toUpperCase();
-      if (ALPHABET.includes(k)) guess(k);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [guess]);
+  // Lobby: create or join
+  if (!tableId || !playerId) {
+    return (
+      <main className="stage-bg min-h-screen font-body text-white/90">
+        <div className="mx-auto flex max-w-2xl flex-col items-center gap-6 px-4 py-20">
+          <header className="text-center">
+            <div className="marquee-lights mx-auto mb-4 h-1.5 w-40 rounded-full" />
+            <h1 className="text-gold-gradient font-display text-6xl tracking-[0.12em] sm:text-8xl">
+              GLIMPSE
+            </h1>
+            <p className="mt-2 text-sm tracking-[0.35em] text-white/60 uppercase">
+              Identify the Clip · Party Game
+            </p>
+          </header>
 
+          <div className="w-full space-y-4">
+            {!tableId ? (
+              <div className="flex flex-col gap-3">
+                <Button
+                  onClick={createTable}
+                  className="w-full rounded-full bg-gradient-to-b from-gold to-gold-deep px-8 py-6 font-display text-2xl tracking-[0.15em] uppercase shadow-lg"
+                >
+                  Create Table
+                </Button>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const code = (e.currentTarget.elements.namedItem("code") as HTMLInputElement)
+                      .value.trim()
+                      .toUpperCase();
+                    if (code) {
+                      setTableId(code);
+                      navigate({ search: { table: code } });
+                    }
+                  }}
+                  className="flex gap-2"
+                >
+                  <Input
+                    name="code"
+                    placeholder="Enter table code..."
+                    className="flex-1 rounded-full border-white/15 bg-white/5 px-4 py-3 text-center font-display text-xl uppercase tracking-wider placeholder:text-white/35"
+                  />
+                  <Button
+                    type="submit"
+                    className="rounded-full border border-white/25 px-8 py-3 font-display text-xl uppercase"
+                  >
+                    Join
+                  </Button>
+                </form>
+              </div>
+            ) : (
+              <form onSubmit={joinTable} className="flex flex-col gap-3">
+                <div className="text-center">
+                  <p className="text-sm text-white/50 uppercase tracking-wider">Table Code</p>
+                  <p className="font-display text-4xl text-gold tracking-widest">{tableId}</p>
+                </div>
+                <Input
+                  value={playerName}
+                  onChange={(e) => setPlayerName(e.target.value)}
+                  placeholder="Your name..."
+                  className="rounded-full border-white/15 bg-white/5 px-4 py-3 text-center font-display text-xl tracking-wider placeholder:text-white/35"
+                />
+                <Button
+                  type="submit"
+                  disabled={!playerName.trim()}
+                  className="rounded-full bg-gradient-to-b from-gold to-gold-deep px-8 py-6 font-display text-2xl tracking-[0.15em] uppercase shadow-lg"
+                >
+                  Join Table
+                </Button>
+              </form>
+            )}
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // Game table
   return (
     <main className="stage-bg min-h-screen font-body text-white/90">
-      <div className="mx-auto flex max-w-5xl flex-col items-center gap-6 px-4 py-10 sm:py-14">
-        <header className="text-center">
-          <div className="marquee-lights mx-auto mb-4 h-1.5 w-40 rounded-full" />
-          <h1 className="text-gold-gradient font-display text-5xl tracking-[0.12em] sm:text-7xl">
-            PUZZLE BOARD
-          </h1>
-          <p className="mt-1 text-sm tracking-[0.35em] text-white/50 uppercase">
-            Round One · Toss Up
-          </p>
+      <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6">
+        <header className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="marquee-lights h-1 w-20 rounded-full" />
+            <h1 className="text-gold-gradient font-display text-3xl tracking-[0.12em] sm:text-5xl">
+              GLIMPSE
+            </h1>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-white/40 uppercase tracking-wider">Table</p>
+            <p className="font-display text-2xl text-gold tracking-widest">{tableId}</p>
+          </div>
         </header>
 
-        <PuzzleBoard rows={rows} revealed={revealed} delays={delays} />
-
-        <div className="flex flex-col items-center gap-2">
-          <span className="rounded-full border border-gold/40 bg-black/30 px-5 py-1.5 font-display text-lg tracking-[0.25em] text-gold uppercase">
-            {puzzle.category}
-          </span>
-          <p
-            className={cn(
-              "min-h-6 text-sm text-white/60",
-              solved && "font-semibold text-gold",
+        <div className="grid gap-6 lg:grid-cols-[1fr,320px]">
+          <div className="space-y-6">
+            {gameState?.phase === "reveal" && currentClip && (
+              <div className="space-y-4">
+                <PuzzleBoard rows={rows} revealed={revealed} delays={delays} />
+                <div className="text-center">
+                  <span className="rounded-full border border-gold/40 bg-black/30 px-5 py-2 font-display text-lg tracking-[0.25em] text-gold uppercase">
+                    {currentClip.category} · {currentClip.type}
+                  </span>
+                </div>
+              </div>
             )}
-          >
-            {message}
-          </p>
-        </div>
 
-        <div className="grid w-full max-w-2xl grid-cols-7 gap-1.5 sm:grid-cols-13 sm:gap-2">
-          {ALPHABET.map((letter) => {
-            const spent = used.has(letter);
-            return (
-              <button
-                key={letter}
-                onClick={() => guess(letter)}
-                disabled={spent || solved}
-                className={cn(
-                  "aspect-square rounded-md border font-display text-lg tracking-wider transition-all duration-200",
-                  spent
-                    ? "border-white/5 bg-white/5 text-white/20"
-                    : VOWELS.includes(letter)
-                      ? "border-gold/50 bg-gold/15 text-gold hover:-translate-y-0.5 hover:bg-gold/30"
-                      : "border-white/15 bg-white/10 text-white hover:-translate-y-0.5 hover:bg-white/20",
+            {gameState?.currentClipId && currentClip?.youtubeId && gameState.phase !== "reveal" && (
+              <div className="board-frame aspect-video">
+                <iframe
+                  src={`https://www.youtube.com/embed/${currentClip.youtubeId}?autoplay=${gameState.clipPlaying ? 1 : 0}&start=${Math.floor(gameState.clipPosition)}`}
+                  className="h-full w-full rounded"
+                  allow="autoplay; encrypted-media"
+                  allowFullScreen
+                />
+              </div>
+            )}
+
+            {gameState?.phase === "playing" && (
+              <form onSubmit={submitGuess} className="flex gap-2">
+                <Input
+                  value={guessInput}
+                  onChange={(e) => setGuessInput(e.target.value)}
+                  placeholder="Type your guess..."
+                  className="flex-1 rounded-full border-white/15 bg-white/5 px-4 py-3 text-lg placeholder:text-white/35"
+                />
+                <Button
+                  type="submit"
+                  className="rounded-full bg-gradient-to-b from-gold to-gold-deep px-8 py-3 font-display text-lg uppercase"
+                >
+                  Guess
+                </Button>
+              </form>
+            )}
+
+            {gameState?.phase === "judging" && gameState.guesses.length > 0 && (
+              <div className="rounded-xl border border-white/10 bg-black/25 p-4 space-y-2">
+                <h3 className="font-display text-xl text-gold uppercase tracking-wider">
+                  Guesses
+                </h3>
+                <div className="space-y-1 max-h-60 overflow-y-auto">
+                  {gameState.guesses.map((g) => (
+                    <div
+                      key={g.id}
+                      className="flex items-center justify-between rounded-lg border border-white/5 bg-white/5 px-3 py-2"
+                    >
+                      <span className="text-sm">
+                        <span className="font-semibold text-gold">{g.playerName}:</span>{" "}
+                        {g.text}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {isHost && (
+              <div className="rounded-xl border border-gold/30 bg-black/30 p-4 space-y-3">
+                <h3 className="font-display text-xl text-gold uppercase tracking-wider">
+                  Host Controls
+                </h3>
+                {gameState?.phase === "lobby" && (
+                  <div className="space-y-2">
+                    <p className="text-sm text-white/60">Select a clip to start:</p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {GLIMPSE_CLIPS.map((clip) => (
+                        <button
+                          key={clip.id}
+                          onClick={() => startRound(clip.id)}
+                          className="rounded-lg border border-white/15 bg-white/10 px-4 py-2 text-left text-sm transition-colors hover:bg-white/20"
+                        >
+                          <div className="font-semibold text-gold">{clip.title}</div>
+                          <div className="text-xs text-white/50">
+                            {clip.category} · {clip.type}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 )}
-              >
-                {letter}
-              </button>
-            );
-          })}
-        </div>
+                {gameState?.phase === "playing" && (
+                  <Button onClick={lockGuesses} className="w-full rounded-full">
+                    Lock Guesses
+                  </Button>
+                )}
+                {gameState?.phase === "judging" && (
+                  <Button onClick={revealTitle} className="w-full rounded-full">
+                    Reveal Title
+                  </Button>
+                )}
+                {gameState?.phase === "reveal" && (
+                  <Button onClick={resetRound} className="w-full rounded-full">
+                    Next Round
+                  </Button>
+                )}
+              </div>
+            )}
 
-        <div className="flex flex-wrap justify-center gap-3">
-          <button
-            onClick={nextPuzzle}
-            className="rounded-full bg-gradient-to-b from-gold to-gold-deep px-6 py-2.5 font-display text-lg tracking-[0.15em] text-stage-deep uppercase shadow-lg transition-transform hover:-translate-y-0.5"
-          >
-            New Puzzle
-          </button>
-          <button
-            onClick={revealAll}
-            className="rounded-full border border-white/25 px-6 py-2.5 font-display text-lg tracking-[0.15em] text-white/80 uppercase transition-colors hover:bg-white/10"
-          >
-            Solve It
-          </button>
-          <button
-            onClick={reset}
-            className="rounded-full border border-white/15 px-6 py-2.5 font-display text-lg tracking-[0.15em] text-white/50 uppercase transition-colors hover:bg-white/10"
-          >
-            Reset
-          </button>
-        </div>
+            <div className="rounded-xl border border-white/10 bg-black/25 p-4 space-y-3">
+              <h3 className="font-display text-lg text-gold uppercase tracking-wider">Chat</h3>
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {gameState?.chat.map((msg) => (
+                  <div key={msg.id} className="text-sm">
+                    <span className="font-semibold text-gold">{msg.playerName}:</span>{" "}
+                    <span className="text-white/80">{msg.text}</span>
+                  </div>
+                ))}
+              </div>
+              <form onSubmit={sendChat} className="flex gap-2">
+                <Input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="Message..."
+                  className="flex-1 rounded-full border-white/15 bg-white/5 px-3 py-2 text-sm placeholder:text-white/35"
+                />
+                <Button type="submit" size="sm" className="rounded-full">
+                  Send
+                </Button>
+              </form>
+            </div>
+          </div>
 
-        <form
-          onSubmit={loadCustom}
-          className="mt-2 flex w-full max-w-2xl flex-col gap-2 rounded-xl border border-white/10 bg-black/25 p-4 sm:flex-row"
-        >
-          <input
-            value={categoryInput}
-            onChange={(e) => setCategoryInput(e.target.value)}
-            placeholder="Category"
-            className="rounded-md border border-white/15 bg-white/5 px-3 py-2 text-sm placeholder:text-white/35 focus:border-gold/60 focus:outline-none sm:w-44"
-          />
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Type any word or phrase…"
-            className="flex-1 rounded-md border border-white/15 bg-white/5 px-3 py-2 text-sm placeholder:text-white/35 focus:border-gold/60 focus:outline-none"
-          />
-          <button
-            type="submit"
-            className="rounded-md bg-white/90 px-5 py-2 font-display text-lg tracking-wider text-stage-deep uppercase transition-colors hover:bg-white"
-          >
-            Load
-          </button>
-        </form>
+          <div className="rounded-xl border border-white/10 bg-black/25 p-4 space-y-3">
+            <h3 className="font-display text-xl text-gold uppercase tracking-wider">Players</h3>
+            <div className="space-y-2">
+              {gameState?.players.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex items-center justify-between rounded-lg border border-white/5 bg-white/5 px-3 py-2"
+                >
+                  <div>
+                    <div className="font-semibold text-white">
+                      {p.name} {p.isHost && <span className="text-xs text-gold">(HOST)</span>}
+                    </div>
+                    <div className="text-xs text-white/50">Score: {p.score}</div>
+                  </div>
+                  {isHost && (
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => updateScore(p.id, p.score + 100)}
+                        className="rounded bg-gold/20 px-2 py-1 text-xs text-gold hover:bg-gold/30"
+                      >
+                        +100
+                      </button>
+                      <button
+                        onClick={() => updateScore(p.id, Math.max(0, p.score - 100))}
+                        className="rounded bg-white/10 px-2 py-1 text-xs text-white/60 hover:bg-white/20"
+                      >
+                        -100
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     </main>
   );
