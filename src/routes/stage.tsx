@@ -4,6 +4,7 @@ import { PuzzleBoard } from "@/components/PuzzleBoard";
 import { GlimpsePlayer } from "@/components/GlimpsePlayer";
 import { GLIMPSE_CLIPS, layoutPhrase, type Cell } from "@/lib/puzzle";
 import type { GameState } from "@/lib/game-state";
+import { PHASE_DURATIONS } from "@/lib/game-state";
 import { fetchGameState as fetchGameStateAction } from "@/lib/game-actions";
 import { cn } from "@/lib/utils";
 
@@ -28,6 +29,7 @@ function StageView() {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
   const [delays, setDelays] = useState<Record<string, number>>({});
+  const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
   const pollInterval = useRef<number | null>(null);
 
   const currentClip = gameState?.currentClipId
@@ -38,6 +40,25 @@ function StageView() {
     () => (currentClip ? layoutPhrase(currentClip.title) : []),
     [currentClip],
   );
+  
+  // Calculate time remaining in current phase
+  useEffect(() => {
+    if (!gameState?.phaseDeadline || gameState.sessionPaused) {
+      setTimeRemaining(null);
+      return;
+    }
+    
+    const updateTimer = () => {
+      const now = Date.now();
+      const remaining = Math.max(0, gameState.phaseDeadline! - now);
+      setTimeRemaining(remaining);
+    };
+    
+    updateTimer();
+    const timer = window.setInterval(updateTimer, 100);
+    
+    return () => clearInterval(timer);
+  }, [gameState?.phaseDeadline, gameState?.sessionPaused]);
 
   const fetchGameState = useCallback(async () => {
     if (!tableId) return;
@@ -116,6 +137,24 @@ function StageView() {
           </div>
         </header>
 
+        {/* Phase Countdown Warning */}
+        {timeRemaining !== null && timeRemaining <= 10000 && (
+          <div
+            className={cn(
+              "rounded-xl border-2 px-8 py-4 font-display text-center uppercase tracking-wider transition-all",
+              timeRemaining <= 5000
+                ? "border-red-500 bg-red-500/20 text-red-300 animate-pulse"
+                : "border-gold bg-gold/20 text-gold"
+            )}
+          >
+            <span className="text-3xl font-bold">
+              {timeRemaining <= 5000 ? "⚠️ " : ""}
+              {Math.ceil(timeRemaining / 1000)}s remaining
+              {timeRemaining <= 5000 ? " ⚠️" : ""}
+            </span>
+          </div>
+        )}
+
         <div className="grid gap-6 lg:grid-cols-[1fr,380px]">
           <div className="space-y-6">
             {gameState?.phase === "reveal" && currentClip && (
@@ -171,7 +210,7 @@ function StageView() {
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="font-semibold text-white text-lg flex items-center gap-2">
+                      <div className="font-semibold text-white text-lg flex items-center gap-2 flex-wrap">
                         <span>{p.name}</span>
                         {p.isHost && (
                           <span className="text-xs rounded-full border border-gold/40 bg-gold/20 px-2 py-0.5 text-gold uppercase tracking-wider">
@@ -181,6 +220,11 @@ function StageView() {
                         {p.lockedIn && (
                           <span className="text-xs rounded-full border border-gold/40 bg-gold/30 px-2 py-0.5 text-gold uppercase tracking-wider">
                             Locked
+                          </span>
+                        )}
+                        {p.joinedMidRound && (
+                          <span className="text-xs rounded-full border border-white/30 bg-white/10 px-2 py-0.5 text-white/70 uppercase tracking-wider">
+                            Next Round
                           </span>
                         )}
                       </div>

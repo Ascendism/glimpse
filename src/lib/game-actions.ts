@@ -84,6 +84,11 @@ export const submitGuess = createServerFn({ method: "POST" })
       throw new Error("Cannot guess: you are already locked in");
     }
     
+    // If player joined mid-round, they can't participate in current clip
+    if (player?.joinedMidRound) {
+      throw new Error("Cannot guess: you joined mid-round, wait for next clip");
+    }
+    
     const success = addGuessInMemory(normalizedTableId, playerId, text, locked ?? false);
     if (!success) {
       throw new Error("Failed to add guess");

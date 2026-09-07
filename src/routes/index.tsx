@@ -4,6 +4,7 @@ import { PuzzleBoard } from "@/components/PuzzleBoard";
 import { GlimpsePlayer } from "@/components/GlimpsePlayer";
 import { GLIMPSE_CLIPS, layoutPhrase, type Cell } from "@/lib/puzzle";
 import type { GameState } from "@/lib/game-state";
+import { PHASE_DURATIONS } from "@/lib/game-state";
 import {
   createTable as createTableAction,
   fetchGameState as fetchGameStateAction,
@@ -67,6 +68,7 @@ function Index() {
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
   const [delays, setDelays] = useState<Record<string, number>>({});
   const [copySuccess, setCopySuccess] = useState(false);
+  const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
   const pollInterval = useRef<number | null>(null);
 
   const currentPlayer = gameState?.players.find((p) => p.id === playerId);
@@ -74,6 +76,25 @@ function Index() {
   const currentClip = gameState?.currentClipId
     ? GLIMPSE_CLIPS.find((c) => c.id === gameState.currentClipId)
     : null;
+
+  // Calculate time remaining in current phase
+  useEffect(() => {
+    if (!gameState?.phaseDeadline || gameState.sessionPaused) {
+      setTimeRemaining(null);
+      return;
+    }
+    
+    const updateTimer = () => {
+      const now = Date.now();
+      const remaining = Math.max(0, gameState.phaseDeadline! - now);
+      setTimeRemaining(remaining);
+    };
+    
+    updateTimer();
+    const timer = window.setInterval(updateTimer, 100); // Update every 100ms for smooth countdown
+    
+    return () => clearInterval(timer);
+  }, [gameState?.phaseDeadline, gameState?.sessionPaused]);
 
   const rows: Cell[][] = useMemo(
     () => (currentClip ? layoutPhrase(currentClip.title) : []),
@@ -390,6 +411,33 @@ function Index() {
           </div>
         </header>
 
+        {/* Phase Countdown Warning */}
+        {timeRemaining !== null && timeRemaining <= 10000 && (
+          <div
+            className={cn(
+              "rounded-xl border-2 px-6 py-3 font-display text-center uppercase tracking-wider transition-all",
+              timeRemaining <= 5000
+                ? "border-red-500 bg-red-500/20 text-red-300 animate-pulse"
+                : "border-gold bg-gold/20 text-gold"
+            )}
+          >
+            <span className="text-xl font-bold">
+              {timeRemaining <= 5000 ? "⚠️ " : ""}
+              {Math.ceil(timeRemaining / 1000)}s remaining
+              {timeRemaining <= 5000 ? " ⚠️" : ""}
+            </span>
+            {gameState?.phase === "playing" && (
+              <span className="ml-2 text-sm opacity-90">— Watch carefully!</span>
+            )}
+            {gameState?.phase === "judging" && (
+              <span className="ml-2 text-sm opacity-90">— Host judge & award points</span>
+            )}
+            {gameState?.phase === "reveal" && (
+              <span className="ml-2 text-sm opacity-90">— Get ready for next round</span>
+            )}
+          </div>
+        )}
+
         <div className="grid gap-6 lg:grid-cols-[1fr,320px]">
           <div className="space-y-6">
             {gameState?.phase === "reveal" && currentClip && (
@@ -423,14 +471,16 @@ function Index() {
                   placeholder={
                     gameState.sessionPaused
                       ? "Session paused..."
-                      : currentPlayer?.lockedIn
-                        ? "Locked in — waiting for judging..."
-                        : "Type your guess..."
+                      : currentPlayer?.joinedMidRound
+                        ? "You'll play next round..."
+                        : currentPlayer?.lockedIn
+                          ? "Locked in — waiting for judging..."
+                          : "Type your guess..."
                   }
-                  disabled={gameState.sessionPaused || currentPlayer?.lockedIn}
+                  disabled={gameState.sessionPaused || currentPlayer?.lockedIn || currentPlayer?.joinedMidRound}
                   className="flex-1 rounded-full border-white/15 bg-white/5 px-4 py-3 text-lg placeholder:text-white/35 disabled:opacity-50"
                 />
-                {!currentPlayer?.lockedIn && !gameState.sessionPaused && (
+                {!currentPlayer?.lockedIn && !gameState.sessionPaused && !currentPlayer?.joinedMidRound && (
                   <>
                     <Button
                       type="submit"
@@ -592,13 +642,18 @@ function Index() {
                   )}
                 >
                   <div>
-                    <div className="font-semibold text-white flex items-center gap-2">
+                    <div className="font-semibold text-white flex items-center gap-2 flex-wrap">
                       <span>
                         {p.name} {p.isHost && <span className="text-xs text-gold">(HOST)</span>}
                       </span>
                       {p.lockedIn && (
                         <span className="text-xs rounded-full border border-gold/40 bg-gold/20 px-2 py-0.5 text-gold uppercase tracking-wider">
                           Locked
+                        </span>
+                      )}
+                      {p.joinedMidRound && (
+                        <span className="text-xs rounded-full border border-white/30 bg-white/10 px-2 py-0.5 text-white/70 uppercase tracking-wider">
+                          Next Round
                         </span>
                       )}
                     </div>
