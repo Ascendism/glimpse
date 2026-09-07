@@ -16,33 +16,39 @@ import {
   restartSession as restartSessionInMemory,
 } from "./game-state";
 
-export const createTable = createServerFn("POST", async ({ hostName }: { hostName?: string }) => {
-  const tableId = createTableInMemory();
-  
-  // If hostName provided, auto-join the host
-  if (hostName && hostName.trim()) {
-    const player = joinTableInMemory(tableId, hostName.trim());
-    if (player) {
-      return { tableId, player };
+export const createTable = createServerFn({ method: "POST" })
+  .validator((data: { hostName?: string }) => data)
+  .handler(async ({ data }) => {
+    const { hostName } = data;
+    const tableId = createTableInMemory();
+    
+    // If hostName provided, auto-join the host
+    if (hostName && hostName.trim()) {
+      const player = joinTableInMemory(tableId, hostName.trim());
+      if (player) {
+        return { tableId, player };
+      }
     }
-  }
-  
-  return { tableId, player: null };
-});
+    
+    return { tableId, player: null };
+  });
 
-export const fetchGameState = createServerFn("GET", async (tableId: string) => {
-  // Normalize table code to uppercase
-  const normalizedTableId = tableId.toUpperCase();
-  const table = getTable(normalizedTableId);
-  if (!table) {
-    throw new Error("Table not found");
-  }
-  return { table };
-});
+export const fetchGameState = createServerFn({ method: "GET" })
+  .validator((data: string) => data)
+  .handler(async ({ data: tableId }) => {
+    // Normalize table code to uppercase
+    const normalizedTableId = tableId.toUpperCase();
+    const table = getTable(normalizedTableId);
+    if (!table) {
+      throw new Error("Table not found");
+    }
+    return { table };
+  });
 
-export const joinTable = createServerFn(
-  "POST",
-  async ({ tableId, playerName }: { tableId: string; playerName: string }) => {
+export const joinTable = createServerFn({ method: "POST" })
+  .validator((data: { tableId: string; playerName: string }) => data)
+  .handler(async ({ data }) => {
+    const { tableId, playerName } = data;
     // Normalize table code to uppercase
     const normalizedTableId = tableId.toUpperCase();
     const player = joinTableInMemory(normalizedTableId, playerName);
@@ -50,12 +56,12 @@ export const joinTable = createServerFn(
       throw new Error("Table not found");
     }
     return { player, tableId: normalizedTableId };
-  },
-);
+  });
 
-export const submitGuess = createServerFn(
-  "POST",
-  async ({ tableId, playerId, text, locked }: { tableId: string; playerId: string; text: string; locked?: boolean }) => {
+export const submitGuess = createServerFn({ method: "POST" })
+  .validator((data: { tableId: string; playerId: string; text: string; locked?: boolean }) => data)
+  .handler(async ({ data }) => {
+    const { tableId, playerId, text, locked } = data;
     // Normalize tableId to uppercase
     const normalizedTableId = tableId.toUpperCase();
     const table = getTable(normalizedTableId);
@@ -83,12 +89,12 @@ export const submitGuess = createServerFn(
       throw new Error("Failed to add guess");
     }
     return { success: true };
-  },
-);
+  });
 
-export const sendChatMessage = createServerFn(
-  "POST",
-  async ({ tableId, playerId, text }: { tableId: string; playerId: string; text: string }) => {
+export const sendChatMessage = createServerFn({ method: "POST" })
+  .validator((data: { tableId: string; playerId: string; text: string }) => data)
+  .handler(async ({ data }) => {
+    const { tableId, playerId, text } = data;
     if (!text || !text.trim()) {
       throw new Error("Cannot send empty message");
     }
@@ -100,22 +106,17 @@ export const sendChatMessage = createServerFn(
       throw new Error("Failed to send message");
     }
     return { success: true };
-  },
-);
+  });
 
-export const performHostAction = createServerFn(
-  "POST",
-  async ({
-    tableId,
-    action,
-    payload,
-    playerId,
-  }: {
+export const performHostAction = createServerFn({ method: "POST" })
+  .validator((data: {
     tableId: string;
     action: string;
     payload?: Record<string, unknown>;
     playerId: string;
-  }) => {
+  }) => data)
+  .handler(async ({ data }) => {
+    const { tableId, action, payload, playerId } = data;
     // Verify player is host (required authorization)
     if (!playerId) {
       throw new Error("Unauthorized: playerId is required");
@@ -180,5 +181,4 @@ export const performHostAction = createServerFn(
     }
 
     return { success: true };
-  },
-);
+  });

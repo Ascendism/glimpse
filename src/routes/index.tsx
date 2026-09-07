@@ -102,7 +102,7 @@ function Index() {
   const fetchGameState = useCallback(async () => {
     if (!tableId) return;
     try {
-      const data = await fetchGameStateAction(tableId);
+      const data = await fetchGameStateAction({ data: tableId });
       setGameState(data.table);
     } catch (error) {
       console.error("Failed to fetch game state:", error);
@@ -124,7 +124,7 @@ function Index() {
     if (!playerName.trim()) return;
     
     try {
-      const data = await createTableAction({ hostName: playerName.trim() });
+      const data = await createTableAction({ data: { hostName: playerName.trim() } });
       const normalizedId = data.tableId.toUpperCase();
       setTableId(normalizedId);
       
@@ -151,7 +151,7 @@ function Index() {
     if (!tableId || !playerName.trim()) return;
 
     try {
-      const data = await joinTableAction({ tableId, playerName: playerName.trim() });
+      const data = await joinTableAction({ data: { tableId, playerName: playerName.trim() } });
       if (data.player) {
         const normalizedId = data.tableId.toUpperCase();
         setPlayerId(data.player.id);
@@ -174,7 +174,7 @@ function Index() {
       return;
 
     try {
-      await submitGuessAction({ tableId, playerId, text: guessInput.trim(), locked: lockIn });
+      await submitGuessAction({ data: { tableId, playerId, text: guessInput.trim(), locked: lockIn } });
       if (lockIn) {
         setGuessInput("");
       }
@@ -188,7 +188,7 @@ function Index() {
     if (!tableId || !playerId || !chatInput.trim()) return;
 
     try {
-      await sendChatMessageAction({ tableId, playerId, text: chatInput.trim() });
+      await sendChatMessageAction({ data: { tableId, playerId, text: chatInput.trim() } });
       setChatInput("");
     } catch (error) {
       console.error("Failed to send chat:", error);
@@ -199,7 +199,7 @@ function Index() {
     if (!tableId || !isHost || !playerId) return;
 
     try {
-      await performHostAction({ tableId, action, payload, playerId });
+      await performHostAction({ data: { tableId, action, payload, playerId } });
     } catch (error) {
       console.error("Failed to perform host action:", error);
     }
