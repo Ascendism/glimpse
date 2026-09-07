@@ -10,6 +10,7 @@ import {
   joinTable as joinTableAction,
   submitGuess as submitGuessAction,
   sendChatMessage as sendChatMessageAction,
+  reportReady as reportReadyAction,
   performHostAction,
 } from "@/lib/game-actions";
 import { getMatchHint } from "@/lib/match-helper";
@@ -246,6 +247,17 @@ function Index() {
     );
   };
 
+  // Report when video is ready to play
+  const reportReady = useCallback(async () => {
+    if (!tableId || !playerId) return;
+    
+    try {
+      await reportReadyAction({ data: { tableId, playerId } });
+    } catch (error) {
+      console.error("Failed to report ready:", error);
+    }
+  }, [tableId, playerId]);
+
   // Host reports clip position/state (for Video.js sync)
   // Throttled to avoid excessive API calls - only update if state changed significantly
   const lastReportRef = useRef({ playing: false, positionSec: 0, timestamp: 0 });
@@ -431,7 +443,19 @@ function Index() {
                   positionSec={gameState.clipPosition}
                   isController={isHost}
                   onReport={isHost ? reportClipState : undefined}
+                  onReady={reportReady}
                 />
+              </div>
+            )}
+            
+            {gameState?.waitingForReady && (
+              <div className="text-center rounded-lg border border-gold/30 bg-gold/10 px-4 py-3">
+                <p className="text-gold font-display text-lg tracking-wider uppercase">
+                  Waiting for all players to load video...
+                </p>
+                <p className="text-sm text-white/60 mt-1">
+                  {gameState.players.filter(p => p.ready).length} / {gameState.players.length} ready
+                </p>
               </div>
             )}
 
@@ -755,7 +779,17 @@ function Index() {
                       <span>
                         {p.name} {p.isHost && <span className="text-xs text-gold">(HOST)</span>}
                       </span>
-                      {p.lockedIn && (
+                      {gameState.waitingForReady && (
+                        <span className={cn(
+                          "text-xs rounded-full border px-2 py-0.5 uppercase tracking-wider",
+                          p.ready
+                            ? "border-green-500/40 bg-green-500/20 text-green-300"
+                            : "border-white/20 bg-white/5 text-white/40"
+                        )}>
+                          {p.ready ? "Ready" : "Loading..."}
+                        </span>
+                      )}
+                      {p.lockedIn && !gameState.waitingForReady && (
                         <span className="text-xs rounded-full border border-gold/40 bg-gold/20 px-2 py-0.5 text-gold uppercase tracking-wider">
                           Locked
                         </span>

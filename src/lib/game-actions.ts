@@ -14,6 +14,7 @@ import {
   pauseSession as pauseSessionInMemory,
   resumeSession as resumeSessionInMemory,
   restartSession as restartSessionInMemory,
+  reportPlayerReady as reportPlayerReadyInMemory,
   configureRoutine as configureRoutineInMemory,
   startRoutine as startRoutineInMemory,
   pauseRoutine as pauseRoutineInMemory,
@@ -111,6 +112,20 @@ export const sendChatMessage = createServerFn({ method: "POST" })
     const success = addChatMessageInMemory(normalizedTableId, playerId, text.trim());
     if (!success) {
       throw new Error("Failed to send message");
+    }
+    return { success: true };
+  });
+
+export const reportReady = createServerFn({ method: "POST" })
+  .validator((data: { tableId: string; playerId: string }) => data)
+  .handler(async ({ data }) => {
+    const { tableId, playerId } = data;
+    
+    // Normalize tableId to uppercase
+    const normalizedTableId = tableId.toUpperCase();
+    const success = reportPlayerReadyInMemory(normalizedTableId, playerId);
+    if (!success) {
+      throw new Error("Failed to report ready");
     }
     return { success: true };
   });

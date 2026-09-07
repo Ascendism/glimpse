@@ -4,6 +4,7 @@ export type Player = {
   score: number;
   isHost: boolean;
   lockedIn: boolean;
+  ready: boolean; // Client reports video loaded and ready to play
 };
 
 export type Guess = {
@@ -62,6 +63,7 @@ export type GameState = {
   revealedTitle: boolean;
   sessionPaused: boolean;
   routine: RoutineRuntime | null;
+  waitingForReady: boolean; // True when waiting for all clients to report ready
 };
 
 // In-memory game state (replace with a database in production)
@@ -91,6 +93,7 @@ export function createTable(): string {
     revealedTitle: false,
     sessionPaused: false,
     routine: null,
+    waitingForReady: false,
   });
   return tableId;
 }
@@ -127,6 +130,7 @@ export function joinTable(tableId: string, playerName: string): Player | null {
     score: 0,
     isHost: table.players.length === 0,
     lockedIn: false,
+    ready: false,
   };
 
   table.players.push(player);
@@ -230,15 +234,19 @@ export function startRound(tableId: string, clipId: string): boolean {
   table.currentClipId = clipId;
   table.phase = "playing";
   table.guesses = [];
-  table.clipPlaying = true;
+  table.clipPlaying = false; // Don't start playing until all clients ready
   table.clipPosition = 0;
   table.revealedTitle = false;
   table.sessionPaused = false;
+  table.waitingForReady = true; // Wait for ready handshake
   
-  // Reset all players' locked-in state
-  table.players.forEach((p) => (p.lockedIn = false));
+  // Reset all players' locked-in and ready state
+  table.players.forEach((p) => {
+    p.lockedIn = false;
+    p.ready = false;
+  });
   
-  addSystemMessage(tableId, "Round started");
+  addSystemMessage(tableId, "Round started — waiting for all players to load...");
   return true;
 }
 
@@ -296,9 +304,13 @@ export function resetRound(tableId: string): boolean {
   table.clipPosition = 0;
   table.revealedTitle = false;
   table.sessionPaused = false;
+  table.waitingForReady = false;
   
-  // Reset all players' locked-in state
-  table.players.forEach((p) => (p.lockedIn = false));
+  // Reset all players' locked-in and ready state
+  table.players.forEach((p) => {
+    p.lockedIn = false;
+    p.ready = false;
+  });
   
   addSystemMessage(tableId, "Round reset — back to lobby");
   return true;
@@ -336,11 +348,49 @@ export function restartSession(tableId: string): boolean {
   table.clipPosition = 0;
   table.revealedTitle = false;
   table.sessionPaused = false;
+  table.waitingForReady = false;
   
-  // Reset all players' locked-in state but keep scores
-  table.players.forEach((p) => (p.lockedIn = false));
+  // Reset all players' locked-in and ready state but keep scores
+  table.players.forEach((p) => {
+    p.lockedIn = false;
+    p.ready = false;
+  });
   
   addSystemMessage(tableId, "Session restarted");
+  return true;
+}
+
+// ============================================================================
+// READY HANDSHAKE - Multiplayer sync before playback
+// ============================================================================
+
+export function reportPlayerReady(
+  tableId: string,
+  playerId: string
+): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+
+  const player = table.players.find((p) => p.id === playerId);
+  if (!player) return false;
+
+  player.ready = true;
+
+  // Check if all players are now ready
+  if (table.waitingForReady && table.players.every((p) => p.ready)) {
+    // All players ready - start playback!
+    table.waitingForReady = false;
+    table.clipPlaying = true;
+
+    // If running a routine, set the phase deadline now
+    if (table.routine && table.routine.status === "running") {
+      table.routine.phaseDeadline =
+        Date.now() + table.routine.config.guessDurationSec * 1000;
+    }
+
+    addSystemMessage(tableId, "All players ready — clip playing!");
+  }
+
   return true;
 }
 
@@ -391,27 +441,30 @@ export function startRoutine(tableId: string): boolean {
 
   table.routine.status = "running";
 
-  // Start first clip immediately
+  // Start first clip but wait for ready handshake
   const clipId = table.routine.config.playlist[table.routine.currentIndex];
   if (!clipId) return false;
 
   table.currentClipId = clipId;
   table.phase = "playing";
   table.guesses = [];
-  table.clipPlaying = true;
+  table.clipPlaying = false; // Don't start playing until all clients ready
   table.clipPosition = 0;
   table.revealedTitle = false;
   table.sessionPaused = false;
-  table.players.forEach((p) => (p.lockedIn = false));
+  table.waitingForReady = true; // Wait for ready handshake
+  table.players.forEach((p) => {
+    p.lockedIn = false;
+    p.ready = false;
+  });
 
-  // Set deadline for guess phase
-  table.routine.phaseDeadline =
-    Date.now() + table.routine.config.guessDurationSec * 1000;
+  // Don't set deadline yet - will be set when all clients are ready
+  table.routine.phaseDeadline = null;
   table.routine.pausedRemainingMs = null;
 
   addSystemMessage(
     tableId,
-    `Routine started: Round ${table.routine.currentIndex + 1}/${table.routine.config.playlist.length}`
+    `Routine started: Round ${table.routine.currentIndex + 1}/${table.routine.config.playlist.length} — waiting for all players to load...`
   );
   return true;
 }
@@ -478,7 +531,11 @@ export function stopRoutine(tableId: string): boolean {
   table.phase = "lobby";
   table.clipPlaying = false;
   table.sessionPaused = false;
-  table.players.forEach((p) => (p.lockedIn = false));
+  table.waitingForReady = false;
+  table.players.forEach((p) => {
+    p.lockedIn = false;
+    p.ready = false;
+  });
 
   addSystemMessage(tableId, "Routine stopped");
   return true;
@@ -561,21 +618,25 @@ function advanceRoutinePhase(table: GameState): void {
           return;
         }
 
-        // Start next clip
+        // Start next clip but wait for ready handshake
         table.currentClipId = nextClipId;
         table.phase = "playing";
         table.guesses = [];
-        table.clipPlaying = true;
+        table.clipPlaying = false; // Don't play until all clients ready
         table.clipPosition = 0;
         table.revealedTitle = false;
-        table.players.forEach((p) => (p.lockedIn = false));
+        table.waitingForReady = true;
+        table.players.forEach((p) => {
+          p.lockedIn = false;
+          p.ready = false;
+        });
 
-        table.routine.phaseDeadline =
-          Date.now() + config.guessDurationSec * 1000;
+        // Don't set deadline yet - will be set when all clients are ready
+        table.routine.phaseDeadline = null;
 
         addSystemMessage(
           table.tableId,
-          `Round ${nextIndex + 1}/${config.playlist.length}`
+          `Round ${nextIndex + 1}/${config.playlist.length} — waiting for all players to load...`
         );
       } else {
         // End of routine or autoAdvance disabled
