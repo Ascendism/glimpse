@@ -11,6 +11,7 @@ import {
   joinTable as joinTableAction,
   submitGuess as submitGuessAction,
   sendChatMessage as sendChatMessageAction,
+  reportReady as reportReadyAction,
   performHostAction,
 } from "@/lib/game-actions";
 import { getMatchHint } from "@/lib/match-helper";
@@ -69,6 +70,7 @@ function Index() {
   const [delays, setDelays] = useState<Record<string, number>>({});
   const [copySuccess, setCopySuccess] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
+  const [readyTimeRemaining, setReadyTimeRemaining] = useState<number | null>(null);
   const pollInterval = useRef<number | null>(null);
 
   const currentPlayer = gameState?.players.find((p) => p.id === playerId);
@@ -139,6 +141,23 @@ function Index() {
       };
     }
   }, [tableId, fetchGameState]);
+
+  // Calculate ready timeout countdown
+  useEffect(() => {
+    if (!gameState?.waitingForReady || !gameState.readyDeadline) {
+      setReadyTimeRemaining(null);
+      return;
+    }
+
+    const updateCountdown = () => {
+      const remaining = Math.max(0, gameState.readyDeadline! - Date.now());
+      setReadyTimeRemaining(Math.ceil(remaining / 1000));
+    };
+
+    updateCountdown();
+    const interval = window.setInterval(updateCountdown, 100);
+    return () => clearInterval(interval);
+  }, [gameState?.waitingForReady, gameState?.readyDeadline]);
 
   const createTable = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -216,6 +235,14 @@ function Index() {
     }
   };
 
+  // Routine configuration state
+  const [selectedPlaylist, setSelectedPlaylist] = useState<string[]>([]);
+  const [guessDuration, setGuessDuration] = useState(45);
+  const [judgingDuration, setJudgingDuration] = useState(10);
+  const [revealDuration, setRevealDuration] = useState(8);
+  const [autoAdvance, setAutoAdvance] = useState(true);
+  const [showOverrides, setShowOverrides] = useState(false);
+
   const hostAction = async (action: string, payload: Record<string, unknown> = {}) => {
     if (!tableId || !isHost || !playerId) return;
 
@@ -226,26 +253,51 @@ function Index() {
     }
   };
 
-  const startRound = (clipId: string) => hostAction("start_round", { clipId });
-  const lockGuesses = () => hostAction("lock_guesses");
-  const revealTitle = () => {
-    // Just call host action; useEffect will handle reveal animation for all clients
-    hostAction("reveal_title");
+  const forceStartAnyway = () => hostAction("force_start_anyway");
+
+  const configureRoutine = () => {
+    if (selectedPlaylist.length === 0) return;
+    hostAction("configure_routine", {
+      config: {
+        playlist: selectedPlaylist,
+        guessDurationSec: guessDuration,
+        judgingDurationSec: judgingDuration,
+        revealDurationSec: revealDuration,
+        autoAdvance,
+      },
+    });
   };
-  const resetRound = () => {
-    // Just call host action; useEffect will handle cleanup
-    hostAction("reset_round");
-  };
-  const updateScore = (pId: string, score: number) =>
-    hostAction("update_score", { playerId: pId, score });
-  const pauseSession = () => hostAction("pause_session");
-  const resumeSession = () => hostAction("resume_session");
-  const restartSession = () => {
-    if (confirm("Restart session? This will clear the current round and return to lobby.")) {
-      // Just call host action; useEffect will handle cleanup
-      hostAction("restart_session");
+
+  const startRoutine = () => hostAction("start_routine");
+  const pauseRoutine = () => hostAction("pause_routine");
+  const resumeRoutine = () => hostAction("resume_routine");
+  const stopRoutine = () => {
+    if (confirm("Stop routine? This will return to lobby.")) {
+      hostAction("stop_routine");
     }
   };
+  const skipPhase = () => hostAction("skip_phase");
+  
+  const updateScore = (pId: string, score: number) =>
+    hostAction("update_score", { playerId: pId, score });
+
+  // Toggle clip selection for playlist
+  const toggleClipInPlaylist = (clipId: string) => {
+    setSelectedPlaylist((prev) =>
+      prev.includes(clipId) ? prev.filter((id) => id !== clipId) : [...prev, clipId]
+    );
+  };
+
+  // Report when video is ready to play
+  const reportReady = useCallback(async () => {
+    if (!tableId || !playerId) return;
+    
+    try {
+      await reportReadyAction({ data: { tableId, playerId } });
+    } catch (error) {
+      console.error("Failed to report ready:", error);
+    }
+  }, [tableId, playerId]);
 
   // Host reports clip position/state (for Video.js sync)
   // Throttled to avoid excessive API calls - only update if state changed significantly
@@ -459,7 +511,39 @@ function Index() {
                   positionSec={gameState.clipPosition}
                   isController={isHost}
                   onReport={isHost ? reportClipState : undefined}
+                  onReady={reportReady}
                 />
+              </div>
+            )}
+            
+            {gameState?.waitingForReady && (
+              <div className="rounded-lg border border-gold/30 bg-gold/10 px-4 py-3 space-y-2">
+                <div className="text-center">
+                  <p className="text-gold font-display text-lg tracking-wider uppercase">
+                    Waiting for all players to load video...
+                  </p>
+                  <p className="text-sm text-white/60 mt-1">
+                    {gameState.players.filter(p => p.ready).length} / {gameState.players.length} ready
+                  </p>
+                  {readyTimeRemaining !== null && (
+                    <p className={cn(
+                      "text-xs mt-1 font-mono",
+                      readyTimeRemaining <= 5 ? "text-red-400 font-semibold animate-pulse" : "text-white/50"
+                    )}>
+                      {readyTimeRemaining > 0 ? `${readyTimeRemaining}s remaining` : "Timed out"}
+                    </p>
+                  )}
+                </div>
+                {isHost && readyTimeRemaining !== null && readyTimeRemaining <= 10 && (
+                  <div className="flex justify-center">
+                    <Button
+                      onClick={forceStartAnyway}
+                      className="rounded-full bg-gold/90 hover:bg-gold px-6 py-2 font-display text-sm uppercase tracking-wider"
+                    >
+                      Start Anyway
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -534,60 +618,199 @@ function Index() {
             {isHost && (
               <div className="rounded-xl border border-gold/30 bg-black/30 p-4 space-y-3">
                 <h3 className="font-display text-xl text-gold uppercase tracking-wider">
-                  Host Controls
+                  Operator Console
                 </h3>
-                {gameState?.phase === "lobby" && (
-                  <div className="space-y-2">
-                    <p className="text-sm text-white/60">Select a clip to start:</p>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {GLIMPSE_CLIPS.map((clip) => (
-                        <button
-                          key={clip.id}
-                          onClick={() => startRound(clip.id)}
-                          className="rounded-lg border border-white/15 bg-white/10 px-4 py-2 text-left text-sm transition-colors hover:bg-white/20"
-                        >
-                          <div className="font-semibold text-gold">{clip.title}</div>
-                          <div className="text-xs text-white/50">
-                            {clip.category} · {clip.type}
-                          </div>
-                        </button>
-                      ))}
+
+                {/* Monitor */}
+                {gameState?.routine && gameState.routine.status !== "idle" && (
+                  <div className="rounded-lg border border-gold/20 bg-gold/5 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-white/60 uppercase tracking-wider">Status</span>
+                      <span className={cn(
+                        "rounded-full px-3 py-1 text-xs font-display uppercase tracking-wider",
+                        gameState.routine.status === "running" && "bg-gold/20 text-gold border border-gold/40",
+                        gameState.routine.status === "paused" && "bg-white/10 text-white/60 border border-white/20",
+                        gameState.routine.status === "stopped" && "bg-red-500/20 text-red-300 border border-red-500/40"
+                      )}>
+                        {gameState.routine.status}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-white/60">Round</span>
+                      <span className="font-display text-gold">
+                        {gameState.routine.currentIndex + 1} / {gameState.routine.config.playlist.length}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-white/60">Phase</span>
+                      <span className="font-display text-white/90 uppercase text-xs">
+                        {gameState.phase}
+                      </span>
+                    </div>
+                    {gameState.routine.phaseDeadline && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-white/60">Time Left</span>
+                        <span className="font-mono text-gold">
+                          {Math.max(0, Math.ceil((gameState.routine.phaseDeadline - Date.now()) / 1000))}s
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-white/60">Locked In</span>
+                      <span className="font-display text-white/90">
+                        {gameState.players.filter(p => p.lockedIn).length} / {gameState.players.length}
+                      </span>
                     </div>
                   </div>
                 )}
-                {gameState?.phase === "playing" && (
-                  <>
-                    {gameState.sessionPaused ? (
-                      <Button onClick={resumeSession} className="w-full rounded-full bg-gold/90">
-                        Resume Session
-                      </Button>
-                    ) : (
-                      <Button onClick={pauseSession} className="w-full rounded-full border border-white/25">
-                        Pause Session
+
+                {/* Configure (when idle) */}
+                {(!gameState?.routine || gameState.routine.status === "idle") && (
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      <label className="text-sm text-white/60 uppercase tracking-wider">
+                        Playlist ({selectedPlaylist.length} clips)
+                      </label>
+                      <div className="grid gap-2 sm:grid-cols-2 max-h-60 overflow-y-auto">
+                        {GLIMPSE_CLIPS.map((clip) => (
+                          <button
+                            key={clip.id}
+                            onClick={() => toggleClipInPlaylist(clip.id)}
+                            className={cn(
+                              "rounded-lg border px-3 py-2 text-left text-sm transition-colors",
+                              selectedPlaylist.includes(clip.id)
+                                ? "border-gold/40 bg-gold/10"
+                                : "border-white/15 bg-white/5 hover:bg-white/10"
+                            )}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1">
+                                <div className="font-semibold text-gold text-xs">{clip.title}</div>
+                                <div className="text-xs text-white/50">
+                                  {clip.category} · {clip.type}
+                                </div>
+                              </div>
+                              {selectedPlaylist.includes(clip.id) && (
+                                <span className="ml-2 text-gold font-display">
+                                  {selectedPlaylist.indexOf(clip.id) + 1}
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="text-xs text-white/50">Guess (s)</label>
+                        <Input
+                          type="number"
+                          value={guessDuration}
+                          onChange={(e) => setGuessDuration(Number(e.target.value))}
+                          min={10}
+                          max={300}
+                          className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm text-center"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-white/50">Judge (s)</label>
+                        <Input
+                          type="number"
+                          value={judgingDuration}
+                          onChange={(e) => setJudgingDuration(Number(e.target.value))}
+                          min={5}
+                          max={120}
+                          className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm text-center"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-white/50">Reveal (s)</label>
+                        <Input
+                          type="number"
+                          value={revealDuration}
+                          onChange={(e) => setRevealDuration(Number(e.target.value))}
+                          min={3}
+                          max={60}
+                          className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm text-center"
+                        />
+                      </div>
+                    </div>
+
+                    <label className="flex items-center gap-2 text-sm text-white/70">
+                      <input
+                        type="checkbox"
+                        checked={autoAdvance}
+                        onChange={(e) => setAutoAdvance(e.target.checked)}
+                        className="rounded"
+                      />
+                      Auto-advance to next clip
+                    </label>
+
+                    <Button
+                      onClick={configureRoutine}
+                      disabled={selectedPlaylist.length === 0}
+                      className="w-full rounded-full bg-gradient-to-b from-gold to-gold-deep"
+                    >
+                      Configure Routine
+                    </Button>
+                  </div>
+                )}
+
+                {/* Run Controls */}
+                {gameState?.routine && gameState.routine.status !== "idle" && (
+                  <div className="space-y-2">
+                    {gameState.routine.status === "running" && (
+                      <Button onClick={pauseRoutine} className="w-full rounded-full border border-white/25">
+                        Pause
                       </Button>
                     )}
-                    <Button onClick={lockGuesses} disabled={gameState.sessionPaused} className="w-full rounded-full">
-                      Lock Guesses
+                    {gameState.routine.status === "paused" && (
+                      <Button onClick={resumeRoutine} className="w-full rounded-full bg-gold/90">
+                        Resume
+                      </Button>
+                    )}
+                    <Button
+                      onClick={stopRoutine}
+                      className="w-full rounded-full border border-red-500/30 text-red-300 hover:bg-red-500/10"
+                    >
+                      Stop Routine
                     </Button>
-                  </>
+                  </div>
                 )}
-                {gameState?.phase === "judging" && (
-                  <Button onClick={revealTitle} className="w-full rounded-full">
-                    Reveal Title
-                  </Button>
-                )}
-                {gameState?.phase === "reveal" && (
-                  <Button onClick={resetRound} className="w-full rounded-full">
-                    Next Round
-                  </Button>
-                )}
-                {gameState?.phase !== "lobby" && (
+
+                {/* Start button when configured but not running */}
+                {gameState?.routine && gameState.routine.status === "idle" && (
                   <Button
-                    onClick={restartSession}
-                    className="w-full rounded-full border border-white/15 text-white/60 hover:bg-white/5"
+                    onClick={startRoutine}
+                    className="w-full rounded-full bg-gradient-to-b from-gold to-gold-deep"
                   >
-                    Restart Session
+                    Start Routine
                   </Button>
+                )}
+
+                {/* Overrides (collapsed by default) */}
+                {gameState?.routine && gameState.routine.status !== "idle" && (
+                  <div className="space-y-2 pt-2 border-t border-white/10">
+                    <button
+                      onClick={() => setShowOverrides(!showOverrides)}
+                      className="flex items-center justify-between w-full text-sm text-white/50 hover:text-white/70"
+                    >
+                      <span className="uppercase tracking-wider">Overrides</span>
+                      <span>{showOverrides ? "▲" : "▼"}</span>
+                    </button>
+                    {showOverrides && (
+                      <div className="space-y-2">
+                        <Button
+                          onClick={skipPhase}
+                          disabled={gameState.routine.status !== "running"}
+                          className="w-full rounded-full border border-white/15 text-xs"
+                        >
+                          Skip Phase
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             )}
@@ -646,7 +869,23 @@ function Index() {
                       <span>
                         {p.name} {p.isHost && <span className="text-xs text-gold">(HOST)</span>}
                       </span>
-                      {p.lockedIn && (
+                      {gameState.waitingForReady && (
+                        <span className={cn(
+                          "text-xs rounded-full border px-2 py-0.5 uppercase tracking-wider",
+                          p.ready
+                            ? "border-green-500/40 bg-green-500/20 text-green-300"
+                            : readyTimeRemaining !== null && readyTimeRemaining === 0
+                              ? "border-red-500/40 bg-red-500/20 text-red-300"
+                              : "border-white/20 bg-white/5 text-white/40"
+                        )}>
+                          {p.ready 
+                            ? "Ready" 
+                            : readyTimeRemaining !== null && readyTimeRemaining === 0
+                              ? "Timed out"
+                              : "Loading..."}
+                        </span>
+                      )}
+                      {p.lockedIn && !gameState.waitingForReady && (
                         <span className="text-xs rounded-full border border-gold/40 bg-gold/20 px-2 py-0.5 text-gold uppercase tracking-wider">
                           Locked
                         </span>

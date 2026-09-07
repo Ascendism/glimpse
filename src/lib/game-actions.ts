@@ -14,6 +14,15 @@ import {
   pauseSession as pauseSessionInMemory,
   resumeSession as resumeSessionInMemory,
   restartSession as restartSessionInMemory,
+  reportPlayerReady as reportPlayerReadyInMemory,
+  forceStartAnyway as forceStartAnywayInMemory,
+  configureRoutine as configureRoutineInMemory,
+  startRoutine as startRoutineInMemory,
+  pauseRoutine as pauseRoutineInMemory,
+  resumeRoutine as resumeRoutineInMemory,
+  stopRoutine as stopRoutineInMemory,
+  skipPhase as skipPhaseInMemory,
+  type RoutineConfig,
 } from "./game-state";
 
 export const createTable = createServerFn({ method: "POST" })
@@ -113,6 +122,20 @@ export const sendChatMessage = createServerFn({ method: "POST" })
     return { success: true };
   });
 
+export const reportReady = createServerFn({ method: "POST" })
+  .validator((data: { tableId: string; playerId: string }) => data)
+  .handler(async ({ data }) => {
+    const { tableId, playerId } = data;
+    
+    // Normalize tableId to uppercase
+    const normalizedTableId = tableId.toUpperCase();
+    const success = reportPlayerReadyInMemory(normalizedTableId, playerId);
+    if (!success) {
+      throw new Error("Failed to report ready");
+    }
+    return { success: true };
+  });
+
 export const performHostAction = createServerFn({ method: "POST" })
   .validator((data: {
     tableId: string;
@@ -176,6 +199,27 @@ export const performHostAction = createServerFn({ method: "POST" })
         break;
       case "restart_session":
         success = restartSessionInMemory(normalizedTableId);
+        break;
+      case "force_start_anyway":
+        success = forceStartAnywayInMemory(normalizedTableId);
+        break;
+      case "configure_routine":
+        success = configureRoutineInMemory(normalizedTableId, payload?.config as RoutineConfig);
+        break;
+      case "start_routine":
+        success = startRoutineInMemory(normalizedTableId);
+        break;
+      case "pause_routine":
+        success = pauseRoutineInMemory(normalizedTableId);
+        break;
+      case "resume_routine":
+        success = resumeRoutineInMemory(normalizedTableId);
+        break;
+      case "stop_routine":
+        success = stopRoutineInMemory(normalizedTableId);
+        break;
+      case "skip_phase":
+        success = skipPhaseInMemory(normalizedTableId);
         break;
       default:
         throw new Error("Unknown action");

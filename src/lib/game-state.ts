@@ -5,6 +5,7 @@ export type Player = {
   isHost: boolean;
   lockedIn: boolean;
   joinedMidRound: boolean;  // True if joined after round started, cleared on round reset
+  ready: boolean; // Client reports video loaded and ready to play
 };
 
 export type Guess = {
@@ -39,6 +40,25 @@ export const PHASE_DURATIONS = {
   reveal: 30000,   // 30 seconds to show answer
 } as const;
 
+export type RoutineStatus = "idle" | "running" | "paused" | "stopped";
+
+export type RoutineConfig = {
+  playlist: string[]; // Array of clip IDs from GLIMPSE_CLIPS
+  guessDurationSec: number;
+  revealDurationSec: number;
+  judgingDurationSec: number;
+  autoAdvance: boolean;
+  pointsCorrect?: number;
+};
+
+export type RoutineRuntime = {
+  status: RoutineStatus;
+  currentIndex: number; // Current position in playlist
+  phaseDeadline: number | null; // Epoch ms when current phase expires
+  pausedRemainingMs: number | null; // Remaining ms when paused
+  config: RoutineConfig; // Snapshot of active config
+};
+
 export type GameState = {
   tableId: string;
   players: Player[];
@@ -52,7 +72,13 @@ export type GameState = {
   sessionPaused: boolean;
   phaseStartTime: number | null;  // Timestamp when current phase started
   phaseDeadline: number | null;   // Timestamp when phase should auto-advance (optional)
+  routine: RoutineRuntime | null;
+  waitingForReady: boolean; // True when waiting for all clients to report ready
+  readyDeadline: number | null; // Epoch milliseconds when ready wait expires
 };
+
+// Configuration constants
+const READY_TIMEOUT_SEC = 15; // Default timeout for ready handshake
 
 // In-memory game state (replace with a database in production)
 // Hang on globalThis to survive HMR in dev
@@ -82,6 +108,9 @@ export function createTable(): string {
     sessionPaused: false,
     phaseStartTime: null,
     phaseDeadline: null,
+    routine: null,
+    waitingForReady: false,
+    readyDeadline: null,
   });
   return tableId;
 }
@@ -122,6 +151,7 @@ export function joinTable(tableId: string, playerName: string): Player | null {
     isHost: isFirstPlayer,
     lockedIn: false,
     joinedMidRound: isMidRound,
+    ready: false,
   };
 
   table.players.push(player);
@@ -234,23 +264,26 @@ export function startRound(tableId: string, clipId: string): boolean {
   table.currentClipId = clipId;
   table.phase = "playing";
   table.guesses = [];
-  table.clipPlaying = true;
+  table.clipPlaying = false; // Don't start playing until all clients ready
   table.clipPosition = 0;
   table.revealedTitle = false;
   table.sessionPaused = false;
+  table.waitingForReady = true; // Wait for ready handshake
+  table.readyDeadline = Date.now() + READY_TIMEOUT_SEC * 1000; // Set timeout
   
-  // Set phase timing
+  // Set phase timing (will start counting when all players ready)
   const now = Date.now();
   table.phaseStartTime = now;
   table.phaseDeadline = now + PHASE_DURATIONS.playing;
   
-  // Reset all players' locked-in state and clear mid-round join flags
+  // Reset all players' locked-in state, clear mid-round join flags, and reset ready
   table.players.forEach((p) => {
     p.lockedIn = false;
     p.joinedMidRound = false;
+    p.ready = false;
   });
   
-  addSystemMessage(tableId, "Round started");
+  addSystemMessage(tableId, "Round started — waiting for all players to load...");
   return true;
 }
 
@@ -320,11 +353,14 @@ export function resetRound(tableId: string): boolean {
   table.sessionPaused = false;
   table.phaseStartTime = null;
   table.phaseDeadline = null;
+  table.waitingForReady = false;
+  table.readyDeadline = null;
   
-  // Reset all players' locked-in state and clear mid-round flags
+  // Reset all players' locked-in state, clear mid-round flags, and reset ready
   table.players.forEach((p) => {
     p.lockedIn = false;
     p.joinedMidRound = false;
+    p.ready = false;
   });
   
   addSystemMessage(tableId, "Round reset — back to lobby");
@@ -365,13 +401,362 @@ export function restartSession(tableId: string): boolean {
   table.sessionPaused = false;
   table.phaseStartTime = null;
   table.phaseDeadline = null;
+  table.waitingForReady = false;
+  table.readyDeadline = null;
   
-  // Reset all players' locked-in state and mid-round flags but keep scores
+  // Reset all players' locked-in state, mid-round flags, and ready state but keep scores
   table.players.forEach((p) => {
     p.lockedIn = false;
     p.joinedMidRound = false;
+    p.ready = false;
   });
   
   addSystemMessage(tableId, "Session restarted");
   return true;
+}
+
+// ============================================================================
+// READY HANDSHAKE - Multiplayer sync before playback
+// ============================================================================
+
+export function reportPlayerReady(
+  tableId: string,
+  playerId: string
+): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+
+  const player = table.players.find((p) => p.id === playerId);
+  if (!player) return false;
+
+  player.ready = true;
+
+  // Check if all players are now ready
+  if (table.waitingForReady && table.players.every((p) => p.ready)) {
+    // All players ready - start playback!
+    table.waitingForReady = false;
+    table.readyDeadline = null; // Clear timeout
+    table.clipPlaying = true;
+
+    // If running a routine, set the phase deadline now
+    if (table.routine && table.routine.status === "running") {
+      table.routine.phaseDeadline =
+        Date.now() + table.routine.config.guessDurationSec * 1000;
+    }
+
+    addSystemMessage(tableId, "All players ready — clip playing!");
+  }
+
+  return true;
+}
+
+export function forceStartAnyway(tableId: string): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+  
+  // Only works if actually waiting for ready
+  if (!table.waitingForReady) return false;
+  
+  // Force start even if not all players ready
+  table.waitingForReady = false;
+  table.readyDeadline = null;
+  table.clipPlaying = true;
+  
+  // If running a routine, set the phase deadline now
+  if (table.routine && table.routine.status === "running") {
+    table.routine.phaseDeadline =
+      Date.now() + table.routine.config.guessDurationSec * 1000;
+  }
+  
+  const readyCount = table.players.filter((p) => p.ready).length;
+  addSystemMessage(
+    tableId,
+    `Host started anyway (${readyCount}/${table.players.length} ready)`
+  );
+  
+  return true;
+}
+
+// ============================================================================
+// ROUTINE ORCHESTRATION
+// ============================================================================
+
+export function configureRoutine(
+  tableId: string,
+  config: RoutineConfig
+): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+
+  // Only allow configuration when idle or not running
+  if (table.routine?.status === "running") {
+    return false;
+  }
+
+  // Create or update routine with idle status
+  table.routine = {
+    status: "idle",
+    currentIndex: 0,
+    phaseDeadline: null,
+    pausedRemainingMs: null,
+    config,
+  };
+
+  addSystemMessage(
+    tableId,
+    `Routine configured: ${config.playlist.length} clips, ${config.guessDurationSec}s guess time`
+  );
+  return true;
+}
+
+export function startRoutine(tableId: string): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+
+  if (!table.routine || table.routine.config.playlist.length === 0) {
+    return false;
+  }
+
+  // Reset to beginning if idle/stopped
+  if (table.routine.status === "idle" || table.routine.status === "stopped") {
+    table.routine.currentIndex = 0;
+  }
+
+  table.routine.status = "running";
+
+  // Start first clip but wait for ready handshake
+  const clipId = table.routine.config.playlist[table.routine.currentIndex];
+  if (!clipId) return false;
+
+  table.currentClipId = clipId;
+  table.phase = "playing";
+  table.guesses = [];
+  table.clipPlaying = false; // Don't start playing until all clients ready
+  table.clipPosition = 0;
+  table.revealedTitle = false;
+  table.sessionPaused = false;
+  table.waitingForReady = true; // Wait for ready handshake
+  table.readyDeadline = Date.now() + READY_TIMEOUT_SEC * 1000; // Set timeout
+  table.players.forEach((p) => {
+    p.lockedIn = false;
+    p.ready = false;
+  });
+
+  // Don't set deadline yet - will be set when all clients are ready
+  table.routine.phaseDeadline = null;
+  table.routine.pausedRemainingMs = null;
+
+  addSystemMessage(
+    tableId,
+    `Routine started: Round ${table.routine.currentIndex + 1}/${table.routine.config.playlist.length} — waiting for all players to load...`
+  );
+  return true;
+}
+
+export function pauseRoutine(tableId: string): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+
+  if (table.routine?.status !== "running") return false;
+
+  // Store remaining time
+  if (table.routine.phaseDeadline) {
+    table.routine.pausedRemainingMs = table.routine.phaseDeadline - Date.now();
+    if (table.routine.pausedRemainingMs < 0) {
+      table.routine.pausedRemainingMs = 0;
+    }
+  }
+
+  table.routine.status = "paused";
+  table.routine.phaseDeadline = null;
+  table.clipPlaying = false;
+  table.sessionPaused = true;
+
+  addSystemMessage(tableId, "Routine paused");
+  return true;
+}
+
+export function resumeRoutine(tableId: string): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+
+  if (table.routine?.status !== "paused") return false;
+
+  // Restore deadline
+  if (table.routine.pausedRemainingMs !== null) {
+    table.routine.phaseDeadline = Date.now() + table.routine.pausedRemainingMs;
+    table.routine.pausedRemainingMs = null;
+  }
+
+  table.routine.status = "running";
+  table.sessionPaused = false;
+
+  // Resume clip if in playing phase
+  if (table.phase === "playing") {
+    table.clipPlaying = true;
+  }
+
+  addSystemMessage(tableId, "Routine resumed");
+  return true;
+}
+
+export function stopRoutine(tableId: string): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+
+  if (!table.routine) return false;
+
+  table.routine.status = "stopped";
+  table.routine.phaseDeadline = null;
+  table.routine.pausedRemainingMs = null;
+  table.routine.currentIndex = 0;
+
+  // Return to idle state
+  table.phase = "lobby";
+  table.clipPlaying = false;
+  table.sessionPaused = false;
+  table.waitingForReady = false;
+  table.readyDeadline = null;
+  table.players.forEach((p) => {
+    p.lockedIn = false;
+    p.ready = false;
+  });
+
+  addSystemMessage(tableId, "Routine stopped");
+  return true;
+}
+
+export function skipPhase(tableId: string): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+
+  if (table.routine?.status !== "running") return false;
+
+  // Force immediate phase advance by setting deadline to now
+  table.routine.phaseDeadline = Date.now();
+
+  addSystemMessage(tableId, "Phase skipped");
+  return true;
+}
+
+// ============================================================================
+// ORCHESTRATION TICK - Server-driven phase advancement
+// ============================================================================
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __glimpseOrchestrationInterval: NodeJS.Timeout | undefined;
+}
+
+function advanceRoutinePhase(table: GameState): void {
+  if (!table.routine || table.routine.status !== "running") return;
+
+  const { phase } = table;
+  const { config, currentIndex } = table.routine;
+
+  switch (phase) {
+    case "playing": {
+      // Advance to judging
+      table.phase = "judging";
+      table.clipPlaying = false;
+
+      // Lock all guesses
+      table.guesses.forEach((g) => (g.locked = true));
+      table.players.forEach((p) => {
+        if (table.guesses.some((g) => g.playerId === p.id)) {
+          p.lockedIn = true;
+        }
+      });
+
+      table.routine.phaseDeadline =
+        Date.now() + config.judgingDurationSec * 1000;
+
+      addSystemMessage(table.tableId, "Guesses locked — judging");
+      break;
+    }
+
+    case "judging": {
+      // Advance to reveal
+      table.phase = "reveal";
+      table.revealedTitle = true;
+
+      table.routine.phaseDeadline =
+        Date.now() + config.revealDurationSec * 1000;
+
+      addSystemMessage(table.tableId, "Title revealed");
+      break;
+    }
+
+    case "reveal": {
+      // Check if there are more clips
+      const nextIndex = currentIndex + 1;
+
+      if (nextIndex < config.playlist.length && config.autoAdvance) {
+        // Advance to next clip
+        table.routine.currentIndex = nextIndex;
+        const nextClipId = config.playlist[nextIndex];
+        if (!nextClipId) {
+          // Shouldn't happen, but handle gracefully
+          table.routine.status = "idle";
+          table.phase = "lobby";
+          addSystemMessage(table.tableId, "Routine complete");
+          return;
+        }
+
+        // Start next clip but wait for ready handshake
+        table.currentClipId = nextClipId;
+        table.phase = "playing";
+        table.guesses = [];
+        table.clipPlaying = false; // Don't play until all clients ready
+        table.clipPosition = 0;
+        table.revealedTitle = false;
+        table.waitingForReady = true;
+        table.readyDeadline = Date.now() + READY_TIMEOUT_SEC * 1000; // Set timeout
+        table.players.forEach((p) => {
+          p.lockedIn = false;
+          p.ready = false;
+        });
+
+        // Don't set deadline yet - will be set when all clients are ready
+        table.routine.phaseDeadline = null;
+
+        addSystemMessage(
+          table.tableId,
+          `Round ${nextIndex + 1}/${config.playlist.length} — waiting for all players to load...`
+        );
+      } else {
+        // End of routine or autoAdvance disabled
+        table.routine.status = "idle";
+        table.phase = "lobby";
+        table.routine.phaseDeadline = null;
+
+        addSystemMessage(table.tableId, "Routine complete — back to lobby");
+      }
+      break;
+    }
+
+    default:
+      // Shouldn't happen during routine
+      break;
+  }
+}
+
+export function tickOrchestration(): void {
+  const now = Date.now();
+
+  for (const table of tables.values()) {
+    if (!table.routine || table.routine.status !== "running") continue;
+    if (!table.routine.phaseDeadline) continue;
+
+    // Check if deadline has passed
+    if (now >= table.routine.phaseDeadline) {
+      advanceRoutinePhase(table);
+    }
+  }
+}
+
+// Start global orchestration tick (HMR-safe)
+if (typeof globalThis !== "undefined" && !globalThis.__glimpseOrchestrationInterval) {
+  globalThis.__glimpseOrchestrationInterval = setInterval(tickOrchestration, 250);
+  console.log("[Glimpse] Orchestration tick started");
 }

@@ -10,6 +10,7 @@ interface GlimpsePlayerProps {
   positionSec: number;
   isController: boolean;
   onReport?: (state: { playing: boolean; positionSec: number }) => void;
+  onReady?: () => void; // Called when video is loaded and ready to play
 }
 
 /**
@@ -25,12 +26,14 @@ export function GlimpsePlayer({
   positionSec,
   isController,
   onReport,
+  onReady,
 }: GlimpsePlayerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerRef = useRef<Player | null>(null);
   const syncIntervalRef = useRef<number | null>(null);
   const reportIntervalRef = useRef<number | null>(null);
   const lastYoutubeIdRef = useRef<string>("");
+  const readyReportedRef = useRef<boolean>(false);
 
   // Initialize or recreate player when YouTube ID changes
   useEffect(() => {
@@ -42,6 +45,7 @@ export function GlimpsePlayer({
         playerRef.current.dispose();
         playerRef.current = null;
       }
+      readyReportedRef.current = false;
     }
 
     lastYoutubeIdRef.current = youtubeId;
@@ -66,6 +70,18 @@ export function GlimpsePlayer({
     });
 
     playerRef.current = player;
+
+    // Report ready when video can play
+    const handleReady = () => {
+      if (!readyReportedRef.current && onReady) {
+        readyReportedRef.current = true;
+        onReady();
+      }
+    };
+
+    // Video.js 'loadeddata' or 'canplay' indicates video is ready
+    player.on("loadeddata", handleReady);
+    player.on("canplay", handleReady);
 
     // Cleanup on unmount
     return () => {
