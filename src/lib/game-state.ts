@@ -81,15 +81,66 @@ export type GameState = {
 const READY_TIMEOUT_SEC = 15; // Default timeout for ready handshake
 
 // In-memory game state (replace with a database in production)
-// Hang on globalThis to survive HMR in dev
+// File-backed Map to survive Nitro worker reloads in dev
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
+
+const STORAGE_DIR = join(tmpdir(), "glimpse-dev-state");
+const STORAGE_FILE = join(STORAGE_DIR, "tables.json");
+
+// Ensure storage directory exists
+if (typeof process !== "undefined" && !existsSync(STORAGE_DIR)) {
+  try {
+    mkdirSync(STORAGE_DIR, { recursive: true });
+  } catch (err) {
+    console.warn("[Glimpse] Could not create storage directory:", err);
+  }
+}
+
+// Load tables from file on module initialization
+function loadTablesFromDisk(): Map<string, GameState> {
+  if (typeof process === "undefined") return new Map();
+  
+  try {
+    if (existsSync(STORAGE_FILE)) {
+      const data = readFileSync(STORAGE_FILE, "utf-8");
+      const parsed = JSON.parse(data) as Array<[string, GameState]>;
+      return new Map(parsed);
+    }
+  } catch (err) {
+    console.warn("[Glimpse] Could not load tables from disk:", err);
+  }
+  return new Map();
+}
+
+// Save tables to file (debounced to avoid excessive writes)
+let saveTimer: NodeJS.Timeout | null = null;
+function saveTablesToDisk(): void {
+  if (typeof process === "undefined") return;
+  
+  if (saveTimer) clearTimeout(saveTimer);
+  
+  saveTimer = setTimeout(() => {
+    try {
+      const data = JSON.stringify(Array.from(tables.entries()));
+      writeFileSync(STORAGE_FILE, data, "utf-8");
+    } catch (err) {
+      console.warn("[Glimpse] Could not save tables to disk:", err);
+    }
+  }, 100); // Debounce 100ms
+}
+
+// Initialize tables from disk or globalThis (for HMR compatibility)
 declare global {
   // eslint-disable-next-line no-var
   var __glimpseTables: Map<string, GameState> | undefined;
 }
 
-const tables = globalThis.__glimpseTables ?? new Map<string, GameState>();
+const tables = globalThis.__glimpseTables ?? loadTablesFromDisk();
 if (!globalThis.__glimpseTables) {
   globalThis.__glimpseTables = tables;
+  console.log(`[Glimpse] Initialized with ${tables.size} table(s) from disk`);
 }
 
 export function createTable(): string {
@@ -112,6 +163,7 @@ export function createTable(): string {
     waitingForReady: false,
     readyDeadline: null,
   });
+  saveTablesToDisk();
   return tableId;
 }
 
@@ -162,6 +214,7 @@ export function joinTable(tableId: string, playerName: string): Player | null {
     addSystemMessage(tableId, `${playerName} joined the table`);
   }
   
+  saveTablesToDisk();
   return player;
 }
 
@@ -170,6 +223,7 @@ export function updateTable(tableId: string, updates: Partial<GameState>): boole
   if (!table) return false;
 
   Object.assign(table, updates);
+  saveTablesToDisk();
   return true;
 }
 
@@ -205,6 +259,7 @@ export function addGuess(tableId: string, playerId: string, text: string, locked
     addSystemMessage(tableId, `${player.name} locked in`);
   }
 
+  saveTablesToDisk();
   return true;
 }
 
@@ -229,6 +284,7 @@ export function addChatMessage(
   };
 
   table.chat.push(message);
+  saveTablesToDisk();
   return true;
 }
 
@@ -254,6 +310,7 @@ export function updatePlayerScore(
     );
   }
   
+  saveTablesToDisk();
   return true;
 }
 
@@ -284,6 +341,7 @@ export function startRound(tableId: string, clipId: string): boolean {
   });
   
   addSystemMessage(tableId, "Round started — waiting for all players to load...");
+  saveTablesToDisk();
   return true;
 }
 
@@ -297,6 +355,7 @@ export function setClipState(
 
   table.clipPlaying = playing;
   table.clipPosition = position;
+  saveTablesToDisk();
   return true;
 }
 
@@ -321,6 +380,7 @@ export function lockGuesses(tableId: string): boolean {
   });
   
   addSystemMessage(tableId, "Guesses locked — judging");
+  saveTablesToDisk();
   return true;
 }
 
@@ -337,6 +397,7 @@ export function revealTitle(tableId: string): boolean {
   table.phaseDeadline = now + PHASE_DURATIONS.reveal;
   
   addSystemMessage(tableId, "Title revealed");
+  saveTablesToDisk();
   return true;
 }
 
@@ -364,6 +425,7 @@ export function resetRound(tableId: string): boolean {
   });
   
   addSystemMessage(tableId, "Round reset — back to lobby");
+  saveTablesToDisk();
   return true;
 }
 
@@ -375,6 +437,7 @@ export function pauseSession(tableId: string): boolean {
   table.clipPlaying = false;
   
   addSystemMessage(tableId, "Session paused");
+  saveTablesToDisk();
   return true;
 }
 
@@ -385,6 +448,7 @@ export function resumeSession(tableId: string): boolean {
   table.sessionPaused = false;
   
   addSystemMessage(tableId, "Session resumed");
+  saveTablesToDisk();
   return true;
 }
 
@@ -412,6 +476,7 @@ export function restartSession(tableId: string): boolean {
   });
   
   addSystemMessage(tableId, "Session restarted");
+  saveTablesToDisk();
   return true;
 }
 
@@ -448,6 +513,7 @@ export function reportPlayerReady(
     addSystemMessage(tableId, "All players ready — clip playing!");
   }
 
+  saveTablesToDisk();
   return true;
 }
 
@@ -477,6 +543,7 @@ export function forceStartAnyway(tableId: string): boolean {
     `Host started anyway (${readyCount}/${participatingPlayers.length} ready)`
   );
   
+  saveTablesToDisk();
   return true;
 }
 
@@ -509,6 +576,7 @@ export function configureRoutine(
     tableId,
     `Routine configured: ${config.playlist.length} clips, ${config.guessDurationSec}s guess time`
   );
+  saveTablesToDisk();
   return true;
 }
 
@@ -553,6 +621,7 @@ export function startRoutine(tableId: string): boolean {
     tableId,
     `Routine started: Round ${table.routine.currentIndex + 1}/${table.routine.config.playlist.length} — waiting for all players to load...`
   );
+  saveTablesToDisk();
   return true;
 }
 
@@ -576,6 +645,7 @@ export function pauseRoutine(tableId: string): boolean {
   table.sessionPaused = true;
 
   addSystemMessage(tableId, "Routine paused");
+  saveTablesToDisk();
   return true;
 }
 
@@ -600,6 +670,7 @@ export function resumeRoutine(tableId: string): boolean {
   }
 
   addSystemMessage(tableId, "Routine resumed");
+  saveTablesToDisk();
   return true;
 }
 
@@ -626,6 +697,7 @@ export function stopRoutine(tableId: string): boolean {
   });
 
   addSystemMessage(tableId, "Routine stopped");
+  saveTablesToDisk();
   return true;
 }
 
@@ -639,6 +711,7 @@ export function skipPhase(tableId: string): boolean {
   table.routine.phaseDeadline = Date.now();
 
   addSystemMessage(tableId, "Phase skipped");
+  saveTablesToDisk();
   return true;
 }
 
@@ -675,6 +748,7 @@ function advanceRoutinePhase(table: GameState): void {
         Date.now() + config.judgingDurationSec * 1000;
 
       addSystemMessage(table.tableId, "Guesses locked — judging");
+      saveTablesToDisk();
       break;
     }
 
@@ -687,6 +761,7 @@ function advanceRoutinePhase(table: GameState): void {
         Date.now() + config.revealDurationSec * 1000;
 
       addSystemMessage(table.tableId, "Title revealed");
+      saveTablesToDisk();
       break;
     }
 
@@ -727,6 +802,7 @@ function advanceRoutinePhase(table: GameState): void {
           table.tableId,
           `Round ${nextIndex + 1}/${config.playlist.length} — waiting for all players to load...`
         );
+        saveTablesToDisk();
       } else {
         // End of routine or autoAdvance disabled
         table.routine.status = "idle";
@@ -734,6 +810,7 @@ function advanceRoutinePhase(table: GameState): void {
         table.routine.phaseDeadline = null;
 
         addSystemMessage(table.tableId, "Routine complete — back to lobby");
+        saveTablesToDisk();
       }
       break;
     }
