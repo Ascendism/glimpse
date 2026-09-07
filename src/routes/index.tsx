@@ -45,13 +45,19 @@ function Index() {
   const navigate = useNavigate();
   const { table: tableIdFromUrl } = useSearch({ from: "/" });
   
-  // Session storage for seat persistence
+  // Session storage for seat persistence (client-side only)
   const [tableId, setTableId] = useState<string | null>(() => {
     if (tableIdFromUrl) return tableIdFromUrl.toUpperCase();
-    return sessionStorage.getItem("glimpse_tableId");
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem("glimpse_tableId");
+    }
+    return null;
   });
   const [playerId, setPlayerId] = useState<string | null>(() => {
-    return sessionStorage.getItem("glimpse_playerId");
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem("glimpse_playerId");
+    }
+    return null;
   });
   const [playerName, setPlayerName] = useState("");
   const [gameState, setGameState] = useState<GameState | null>(null);
@@ -117,7 +123,9 @@ function Index() {
       const data = await createTableAction();
       const normalizedId = data.tableId.toUpperCase();
       setTableId(normalizedId);
-      sessionStorage.setItem("glimpse_tableId", normalizedId);
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("glimpse_tableId", normalizedId);
+      }
       navigate({ search: { table: normalizedId } });
     } catch (error) {
       console.error("Failed to create table:", error);
@@ -135,9 +143,11 @@ function Index() {
         setPlayerId(data.player.id);
         setTableId(normalizedId);
         // Save to sessionStorage for refresh persistence
-        sessionStorage.setItem("glimpse_tableId", normalizedId);
-        sessionStorage.setItem("glimpse_playerId", data.player.id);
-        sessionStorage.setItem("glimpse_playerName", data.player.name);
+        if (typeof window !== "undefined") {
+          sessionStorage.setItem("glimpse_tableId", normalizedId);
+          sessionStorage.setItem("glimpse_playerId", data.player.id);
+          sessionStorage.setItem("glimpse_playerName", data.player.name);
+        }
       }
     } catch (error) {
       console.error("Failed to join table:", error);
