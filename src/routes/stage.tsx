@@ -43,8 +43,8 @@ function StageView() {
     if (!tableId) return;
     try {
       const normalizedId = tableId.toUpperCase();
-      const data = await fetchGameStateAction(normalizedId);
-      setGameState(data.table);
+      const result = await fetchGameStateAction({ data: normalizedId });
+      setGameState(result.table);
     } catch (error) {
       console.error("Failed to fetch game state:", error);
     }
