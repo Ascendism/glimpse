@@ -1,3 +1,6 @@
+import type { LibraryClip, Playlist, SegmentLadder, VoteState } from "./library";
+import { migrateClipsToLibrary, resetSegmentLadder } from "./library";
+
 export type Player = {
   id: string;
   name: string;
@@ -43,7 +46,7 @@ export const PHASE_DURATIONS = {
 export type RoutineStatus = "idle" | "running" | "paused" | "stopped";
 
 export type RoutineConfig = {
-  playlist: string[]; // Array of clip IDs from GLIMPSE_CLIPS
+  playlist: string[]; // Array of clip IDs from library
   guessDurationSec: number;
   revealDurationSec: number;
   judgingDurationSec: number;
@@ -75,6 +78,12 @@ export type GameState = {
   routine: RoutineRuntime | null;
   waitingForReady: boolean; // True when waiting for all clients to report ready
   readyDeadline: number | null; // Epoch milliseconds when ready wait expires
+  segmentLadder: SegmentLadder | null; // Progressive duration segments
+  voteState: VoteState | null; // Player votes during round
+  library: {
+    clips: LibraryClip[];
+    playlists: Playlist[];
+  };
 };
 
 // Configuration constants
@@ -162,6 +171,12 @@ export function createTable(): string {
     routine: null,
     waitingForReady: false,
     readyDeadline: null,
+    segmentLadder: null,
+    voteState: null,
+    library: {
+      clips: migrateClipsToLibrary(), // Seed with migrated clips
+      playlists: [],
+    },
   });
   saveTablesToDisk();
   return tableId;
@@ -327,6 +342,17 @@ export function startRound(tableId: string, clipId: string): boolean {
   table.sessionPaused = false;
   table.waitingForReady = true; // Wait for ready handshake
   table.readyDeadline = Date.now() + READY_TIMEOUT_SEC * 1000; // Set timeout
+  
+  // Initialize segment ladder for progressive playback
+  table.segmentLadder = resetSegmentLadder();
+  
+  // Initialize vote state
+  const eligibleCount = table.players.filter((p) => !p.joinedMidRound).length;
+  table.voteState = {
+    advanceVotes: [],
+    hintVotes: [],
+    threshold: Math.ceil(eligibleCount / 2),
+  };
   
   // Set phase timing (will start counting when all players ready)
   const now = Date.now();
@@ -821,12 +847,26 @@ function advanceRoutinePhase(table: GameState): void {
   }
 }
 
+function allEligiblePlayersLocked(table: GameState): boolean {
+  const eligiblePlayers = table.players.filter((p) => !p.joinedMidRound);
+  if (eligiblePlayers.length === 0) return false;
+  
+  return eligiblePlayers.every((p) => p.lockedIn);
+}
+
 export function tickOrchestration(): void {
   const now = Date.now();
 
   for (const table of tables.values()) {
     if (!table.routine || table.routine.status !== "running") continue;
     if (!table.routine.phaseDeadline) continue;
+
+    // Early advance: if all eligible players locked in during playing phase, skip to judging
+    if (table.phase === "playing" && allEligiblePlayersLocked(table)) {
+      addSystemMessage(table.tableId, "All players locked in — advancing to judging");
+      advanceRoutinePhase(table);
+      continue;
+    }
 
     // Check if deadline has passed
     if (now >= table.routine.phaseDeadline) {
@@ -839,4 +879,220 @@ export function tickOrchestration(): void {
 if (typeof globalThis !== "undefined" && !globalThis.__glimpseOrchestrationInterval) {
   globalThis.__glimpseOrchestrationInterval = setInterval(tickOrchestration, 250);
   console.log("[Glimpse] Orchestration tick started");
+}
+
+// ============================================================================
+// LIBRARY MANAGEMENT - Clip CRUD operations
+// ============================================================================
+
+export function addClipToLibrary(tableId: string, clip: LibraryClip): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+
+  // Check for duplicate ID
+  if (table.library.clips.some((c) => c.id === clip.id)) {
+    return false;
+  }
+
+  table.library.clips.push(clip);
+  addSystemMessage(tableId, `Clip added: ${clip.title}`);
+  saveTablesToDisk();
+  return true;
+}
+
+export function updateClipInLibrary(tableId: string, clipId: string, updates: Partial<LibraryClip>): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+
+  const clipIndex = table.library.clips.findIndex((c) => c.id === clipId);
+  if (clipIndex === -1) return false;
+
+  table.library.clips[clipIndex] = {
+    ...table.library.clips[clipIndex]!,
+    ...updates,
+    updatedAt: Date.now(),
+  };
+
+  saveTablesToDisk();
+  return true;
+}
+
+export function removeClipFromLibrary(tableId: string, clipId: string): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+
+  const initialLength = table.library.clips.length;
+  table.library.clips = table.library.clips.filter((c) => c.id !== clipId);
+
+  if (table.library.clips.length === initialLength) {
+    return false; // Clip not found
+  }
+
+  // Remove from all playlists
+  table.library.playlists.forEach((playlist) => {
+    playlist.clipIds = playlist.clipIds.filter((id) => id !== clipId);
+  });
+
+  addSystemMessage(tableId, `Clip removed from library`);
+  saveTablesToDisk();
+  return true;
+}
+
+export function createPlaylist(tableId: string, name: string, clipIds: string[] = []): string | null {
+  const table = getTable(tableId);
+  if (!table) return null;
+
+  const playlistId = `playlist_${Math.random().toString(36).substring(2, 15)}`;
+  const now = Date.now();
+
+  const playlist: Playlist = {
+    id: playlistId,
+    name,
+    clipIds,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  table.library.playlists.push(playlist);
+  saveTablesToDisk();
+  return playlistId;
+}
+
+export function updatePlaylist(tableId: string, playlistId: string, updates: Partial<Omit<Playlist, "id" | "createdAt">>): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+
+  const playlistIndex = table.library.playlists.findIndex((p) => p.id === playlistId);
+  if (playlistIndex === -1) return false;
+
+  table.library.playlists[playlistIndex] = {
+    ...table.library.playlists[playlistIndex]!,
+    ...updates,
+    updatedAt: Date.now(),
+  };
+
+  saveTablesToDisk();
+  return true;
+}
+
+export function removePlaylist(tableId: string, playlistId: string): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+
+  const initialLength = table.library.playlists.length;
+  table.library.playlists = table.library.playlists.filter((p) => p.id !== playlistId);
+
+  if (table.library.playlists.length === initialLength) {
+    return false;
+  }
+
+  saveTablesToDisk();
+  return true;
+}
+
+// ============================================================================
+// SEGMENT LADDER - Progressive duration playback
+// ============================================================================
+
+export function initializeSegmentLadder(tableId: string): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+
+  table.segmentLadder = resetSegmentLadder();
+  saveTablesToDisk();
+  return true;
+}
+
+export function advanceToNextSegment(tableId: string): boolean {
+  const table = getTable(tableId);
+  if (!table || !table.segmentLadder) return false;
+
+  const { currentSegmentIndex, segmentDurations } = table.segmentLadder;
+  if (currentSegmentIndex >= segmentDurations.length - 1) {
+    return false; // Already at max
+  }
+
+  table.segmentLadder.currentSegmentIndex += 1;
+  const newDuration = segmentDurations[table.segmentLadder.currentSegmentIndex];
+
+  addSystemMessage(tableId, `Advanced to ${newDuration}s segment`);
+  saveTablesToDisk();
+  return true;
+}
+
+export function resetSegmentLadderState(tableId: string): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+
+  table.segmentLadder = null;
+  saveTablesToDisk();
+  return true;
+}
+
+// ============================================================================
+// VOTING SYSTEM - Player votes for segment advance and hints
+// ============================================================================
+
+export function initializeVoteState(tableId: string): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+
+  const eligibleCount = table.players.filter((p) => !p.joinedMidRound).length;
+  const threshold = Math.ceil(eligibleCount / 2); // Majority
+
+  table.voteState = {
+    advanceVotes: [],
+    hintVotes: [],
+    threshold,
+  };
+
+  saveTablesToDisk();
+  return true;
+}
+
+export function castVote(tableId: string, playerId: string, voteType: "advance" | "hint"): boolean {
+  const table = getTable(tableId);
+  if (!table || !table.voteState) return false;
+
+  const player = table.players.find((p) => p.id === playerId);
+  if (!player || player.joinedMidRound) return false;
+
+  if (voteType === "advance") {
+    if (!table.voteState.advanceVotes.includes(playerId)) {
+      table.voteState.advanceVotes.push(playerId);
+    }
+  } else if (voteType === "hint") {
+    if (!table.voteState.hintVotes.includes(playerId)) {
+      table.voteState.hintVotes.push(playerId);
+    }
+  }
+
+  // Check if threshold reached
+  const votes = voteType === "advance" ? table.voteState.advanceVotes : table.voteState.hintVotes;
+  if (votes.length >= table.voteState.threshold) {
+    if (voteType === "advance") {
+      // Auto-advance segment
+      addSystemMessage(tableId, `Vote passed: advancing segment`);
+      advanceToNextSegment(tableId);
+      // Reset advance votes after successful advance
+      table.voteState.advanceVotes = [];
+    } else {
+      // Reveal hint
+      addSystemMessage(tableId, `Vote passed: revealing hint`);
+      // TODO: Implement hint reveal logic in iteration 7+
+      table.voteState.hintVotes = [];
+    }
+  }
+
+  saveTablesToDisk();
+  return true;
+}
+
+export function resetVoteState(tableId: string): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+
+  table.voteState = null;
+  saveTablesToDisk();
+  return true;
 }
