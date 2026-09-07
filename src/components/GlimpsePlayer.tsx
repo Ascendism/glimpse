@@ -5,7 +5,8 @@ import "video.js/dist/video-js.css";
 import type Player from "video.js/dist/types/player";
 
 interface GlimpsePlayerProps {
-  youtubeId: string;
+  youtubeId?: string;
+  videoUrl?: string; // For uploaded/local files
   playing: boolean;
   positionSec: number;
   isController: boolean;
@@ -26,6 +27,7 @@ interface GlimpsePlayerProps {
  */
 export function GlimpsePlayer({
   youtubeId,
+  videoUrl,
   playing,
   positionSec,
   isController,
@@ -39,22 +41,25 @@ export function GlimpsePlayer({
   const playerRef = useRef<Player | null>(null);
   const syncIntervalRef = useRef<number | null>(null);
   const reportIntervalRef = useRef<number | null>(null);
-  const lastYoutubeIdRef = useRef<string>("");
+  const lastVideoIdRef = useRef<string>("");
   const readyReportedRef = useRef<boolean>(false);
   const [isInitializing, setIsInitializing] = useState(false);
   
   // Track if we've seeked to start for current video
   const hasInitialSeekedRef = useRef<boolean>(false);
 
-  // Initialize or recreate player when YouTube ID changes
+  // Determine current video ID (YouTube ID or video URL)
+  const currentVideoId = youtubeId || videoUrl || "";
+
+  // Initialize or recreate player when video source changes
   useEffect(() => {
     if (!videoRef.current) return;
 
     // Skip if already initializing
     if (isInitializing) return;
 
-    // Dispose old player if YouTube ID changed
-    if (lastYoutubeIdRef.current && lastYoutubeIdRef.current !== youtubeId) {
+    // Dispose old player if video source changed
+    if (lastVideoIdRef.current && lastVideoIdRef.current !== currentVideoId) {
       if (playerRef.current) {
         try {
           playerRef.current.dispose();
@@ -67,12 +72,12 @@ export function GlimpsePlayer({
       hasInitialSeekedRef.current = false; // Reset seek flag
     }
 
-    lastYoutubeIdRef.current = youtubeId;
+    lastVideoIdRef.current = currentVideoId;
 
     // Skip if already initialized for this video
     if (playerRef.current) return;
 
-    // Initialize Video.js with YouTube tech (qbot-style)
+    // Initialize Video.js
     setIsInitializing(true);
 
     // Delay initialization slightly to ensure DOM is fully ready
@@ -83,22 +88,36 @@ export function GlimpsePlayer({
       }
 
       try {
-        const player = videojs(videoRef.current, {
-          techOrder: ["youtube"],
+        // Configure based on source type
+        const isYouTube = !!youtubeId;
+        const playerOptions: any = {
           autoplay: false,
           controls: true,
-          youtube: {
+        };
+
+        if (isYouTube) {
+          playerOptions.techOrder = ["youtube"];
+          playerOptions.youtube = {
             iv_load_policy: 3, // Disable annotations
             modestbranding: 1,
             rel: 0,
-          },
-          sources: [
+          };
+          playerOptions.sources = [
             {
               type: "video/youtube",
               src: `https://www.youtube.com/watch?v=${youtubeId}`,
             },
-          ],
-        });
+          ];
+        } else if (videoUrl) {
+          // Native video player for uploads
+          playerOptions.sources = [
+            {
+              src: videoUrl,
+            },
+          ];
+        }
+
+        const player = videojs(videoRef.current, playerOptions);
 
         playerRef.current = player;
 
@@ -122,17 +141,17 @@ export function GlimpsePlayer({
         };
 
         const handleLoadedData = () => {
-          console.log("[GlimpsePlayer] Video loaded:", youtubeId);
+          console.log("[GlimpsePlayer] Video loaded:", currentVideoId);
           handleReady();
         };
 
         const handleCanPlay = () => {
-          console.log("[GlimpsePlayer] Video can play:", youtubeId);
+          console.log("[GlimpsePlayer] Video can play:", currentVideoId);
           handleReady();
         };
 
         const handleError = (err: unknown) => {
-          console.error("[GlimpsePlayer] Video error:", youtubeId, err);
+          console.error("[GlimpsePlayer] Video error:", currentVideoId, err);
         };
 
         // Video.js 'loadeddata' or 'canplay' indicates video is ready
@@ -140,9 +159,9 @@ export function GlimpsePlayer({
         player.on("canplay", handleCanPlay);
         player.on("error", handleError);
 
-        // YouTube tech specific ready event
+        // Player ready event
         player.ready(() => {
-          console.log("[GlimpsePlayer] Player ready:", youtubeId);
+          console.log("[GlimpsePlayer] Player ready:", currentVideoId);
           setIsInitializing(false);
         });
       } catch (err) {
@@ -164,7 +183,7 @@ export function GlimpsePlayer({
       }
       setIsInitializing(false);
     };
-  }, [youtubeId, onReady]);
+  }, [currentVideoId, onReady, timeStart]);
 
   // Controller (host): report position periodically
   useEffect(() => {
