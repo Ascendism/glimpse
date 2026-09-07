@@ -6,19 +6,51 @@ export type Cell =
 export const ROW_WIDTHS = [12, 14, 14, 12];
 export const TOTAL_ROWS = ROW_WIDTHS.length;
 
-export type Puzzle = { category: string; phrase: string };
+export type GlimpseClip = {
+  id: string;
+  title: string;
+  type: "movie" | "tv" | "song";
+  category: string;
+  youtubeId?: string;
+  clipUrl?: string;
+};
 
-export const PUZZLES: Puzzle[] = [
-  { category: "Phrase", phrase: "SPIN THE WHEEL AND WIN BIG" },
-  { category: "Thing", phrase: "GRAND PRIZE PACKAGE" },
-  { category: "Before & After", phrase: "GAME SHOW HOST A PARTY" },
-  { category: "Place", phrase: "THE BRIGHT LIGHTS OF LAS VEGAS" },
-  { category: "Fun & Games", phrase: "SOLVING THE PUZZLE" },
-  { category: "Around the House", phrase: "COFFEE TABLE BOOKS" },
-  { category: "Person", phrase: "A VERY LUCKY CONTESTANT" },
-  { category: "Living Thing", phrase: "GIANT PANDA BEAR" },
-  { category: "Food & Drink", phrase: "HOT BUTTERED POPCORN" },
-  { category: "Song Lyrics", phrase: "EVERY LETTER COUNTS TONIGHT" },
+export const GLIMPSE_CLIPS: GlimpseClip[] = [
+  {
+    id: "1",
+    title: "THE SHAWSHANK REDEMPTION",
+    type: "movie",
+    category: "Classic Drama",
+    youtubeId: "6hB3S9bIaco",
+  },
+  {
+    id: "2",
+    title: "BREAKING BAD",
+    type: "tv",
+    category: "Crime Drama",
+    youtubeId: "HhesaQXLuRY",
+  },
+  {
+    id: "3",
+    title: "BOHEMIAN RHAPSODY",
+    type: "song",
+    category: "Rock Anthem",
+    youtubeId: "fJ9rUzIMcZQ",
+  },
+  {
+    id: "4",
+    title: "PULP FICTION",
+    type: "movie",
+    category: "Crime Thriller",
+    youtubeId: "s7EdQ4FqbhY",
+  },
+  {
+    id: "5",
+    title: "STRANGER THINGS",
+    type: "tv",
+    category: "Sci-Fi Horror",
+    youtubeId: "b9EkMc79ZSU",
+  },
 ];
 
 const isLetter = (c: string) => /[A-Z]/.test(c);
@@ -68,6 +100,3 @@ export function layoutPhrase(phrase: string): Cell[][] {
   }
   return rows;
 }
-
-export const VOWELS = ["A", "E", "I", "O", "U"];
-export const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");

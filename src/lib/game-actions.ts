@@ -1,0 +1,184 @@
+import { createServerFn } from "@tanstack/react-start";
+import {
+  createTable as createTableInMemory,
+  getTable,
+  joinTable as joinTableInMemory,
+  addGuess as addGuessInMemory,
+  addChatMessage as addChatMessageInMemory,
+  updatePlayerScore,
+  startRound as startRoundInMemory,
+  lockGuesses as lockGuessesInMemory,
+  revealTitle as revealTitleInMemory,
+  resetRound as resetRoundInMemory,
+  setClipState as setClipStateInMemory,
+  pauseSession as pauseSessionInMemory,
+  resumeSession as resumeSessionInMemory,
+  restartSession as restartSessionInMemory,
+} from "./game-state";
+
+export const createTable = createServerFn("POST", async ({ hostName }: { hostName?: string }) => {
+  const tableId = createTableInMemory();
+  
+  // If hostName provided, auto-join the host
+  if (hostName && hostName.trim()) {
+    const player = joinTableInMemory(tableId, hostName.trim());
+    if (player) {
+      return { tableId, player };
+    }
+  }
+  
+  return { tableId, player: null };
+});
+
+export const fetchGameState = createServerFn("GET", async (tableId: string) => {
+  // Normalize table code to uppercase
+  const normalizedTableId = tableId.toUpperCase();
+  const table = getTable(normalizedTableId);
+  if (!table) {
+    throw new Error("Table not found");
+  }
+  return { table };
+});
+
+export const joinTable = createServerFn(
+  "POST",
+  async ({ tableId, playerName }: { tableId: string; playerName: string }) => {
+    // Normalize table code to uppercase
+    const normalizedTableId = tableId.toUpperCase();
+    const player = joinTableInMemory(normalizedTableId, playerName);
+    if (!player) {
+      throw new Error("Table not found");
+    }
+    return { player, tableId: normalizedTableId };
+  },
+);
+
+export const submitGuess = createServerFn(
+  "POST",
+  async ({ tableId, playerId, text, locked }: { tableId: string; playerId: string; text: string; locked?: boolean }) => {
+    // Normalize tableId to uppercase
+    const normalizedTableId = tableId.toUpperCase();
+    const table = getTable(normalizedTableId);
+    if (!table) {
+      throw new Error("Table not found");
+    }
+    
+    // Server-side guards
+    if (table.phase !== "playing") {
+      throw new Error("Cannot guess: game is not in playing phase");
+    }
+    
+    if (table.sessionPaused) {
+      throw new Error("Cannot guess: session is paused");
+    }
+    
+    const player = table.players.find((p) => p.id === playerId);
+    // If already locked in, reject ANY further guess (update or lock)
+    if (player?.lockedIn) {
+      throw new Error("Cannot guess: you are already locked in");
+    }
+    
+    const success = addGuessInMemory(normalizedTableId, playerId, text, locked ?? false);
+    if (!success) {
+      throw new Error("Failed to add guess");
+    }
+    return { success: true };
+  },
+);
+
+export const sendChatMessage = createServerFn(
+  "POST",
+  async ({ tableId, playerId, text }: { tableId: string; playerId: string; text: string }) => {
+    if (!text || !text.trim()) {
+      throw new Error("Cannot send empty message");
+    }
+    
+    // Normalize tableId to uppercase
+    const normalizedTableId = tableId.toUpperCase();
+    const success = addChatMessageInMemory(normalizedTableId, playerId, text.trim());
+    if (!success) {
+      throw new Error("Failed to send message");
+    }
+    return { success: true };
+  },
+);
+
+export const performHostAction = createServerFn(
+  "POST",
+  async ({
+    tableId,
+    action,
+    payload,
+    playerId,
+  }: {
+    tableId: string;
+    action: string;
+    payload?: Record<string, unknown>;
+    playerId: string;
+  }) => {
+    // Verify player is host (required authorization)
+    if (!playerId) {
+      throw new Error("Unauthorized: playerId is required");
+    }
+    
+    // Normalize tableId to uppercase
+    const normalizedTableId = tableId.toUpperCase();
+    const table = getTable(normalizedTableId);
+    if (!table) {
+      throw new Error("Table not found");
+    }
+    
+    const player = table.players.find((p) => p.id === playerId);
+    if (!player) {
+      throw new Error("Unauthorized: Player not found");
+    }
+    
+    if (!player.isHost) {
+      throw new Error("Unauthorized: Only host can perform this action");
+    }
+
+    let success = false;
+
+    switch (action) {
+      case "start_round":
+        success = startRoundInMemory(normalizedTableId, payload?.clipId as string);
+        break;
+      case "lock_guesses":
+        success = lockGuessesInMemory(normalizedTableId);
+        break;
+      case "reveal_title":
+        success = revealTitleInMemory(normalizedTableId);
+        break;
+      case "reset_round":
+        success = resetRoundInMemory(normalizedTableId);
+        break;
+      case "update_score":
+        success = updatePlayerScore(normalizedTableId, payload?.playerId as string, payload?.score as number);
+        break;
+      case "set_clip_state":
+        success = setClipStateInMemory(
+          normalizedTableId,
+          payload?.playing as boolean,
+          payload?.position as number,
+        );
+        break;
+      case "pause_session":
+        success = pauseSessionInMemory(normalizedTableId);
+        break;
+      case "resume_session":
+        success = resumeSessionInMemory(normalizedTableId);
+        break;
+      case "restart_session":
+        success = restartSessionInMemory(normalizedTableId);
+        break;
+      default:
+        throw new Error("Unknown action");
+    }
+
+    if (!success) {
+      throw new Error("Action failed");
+    }
+
+    return { success: true };
+  },
+);
