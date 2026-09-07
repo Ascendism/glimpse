@@ -4,6 +4,7 @@ export type Player = {
   score: number;
   isHost: boolean;
   lockedIn: boolean;
+  joinedMidRound: boolean;  // True if joined after round started, cleared on round reset
   ready: boolean; // Client reports video loaded and ready to play
 };
 
@@ -31,6 +32,13 @@ export type GamePhase =
   | "guessing"
   | "judging"
   | "reveal";
+
+// Phase duration configuration (in milliseconds)
+export const PHASE_DURATIONS = {
+  playing: 60000,  // 60 seconds to watch clip
+  judging: 45000,  // 45 seconds for host to judge
+  reveal: 30000,   // 30 seconds to show answer
+} as const;
 
 export type RoutineStatus = "idle" | "running" | "paused" | "stopped";
 
@@ -62,6 +70,8 @@ export type GameState = {
   clipPosition: number;
   revealedTitle: boolean;
   sessionPaused: boolean;
+  phaseStartTime: number | null;  // Timestamp when current phase started
+  phaseDeadline: number | null;   // Timestamp when phase should auto-advance (optional)
   routine: RoutineRuntime | null;
   waitingForReady: boolean; // True when waiting for all clients to report ready
   readyDeadline: number | null; // Epoch milliseconds when ready wait expires
@@ -96,6 +106,8 @@ export function createTable(): string {
     clipPosition: 0,
     revealedTitle: false,
     sessionPaused: false,
+    phaseStartTime: null,
+    phaseDeadline: null,
     routine: null,
     waitingForReady: false,
     readyDeadline: null,
@@ -129,17 +141,27 @@ export function joinTable(tableId: string, playerName: string): Player | null {
   if (!table) return null;
 
   const playerId = Math.random().toString(36).substring(2, 15);
+  const isFirstPlayer = table.players.length === 0;
+  const isMidRound = table.phase !== "lobby" && table.currentClipId !== null;
+  
   const player: Player = {
     id: playerId,
     name: playerName,
     score: 0,
-    isHost: table.players.length === 0,
+    isHost: isFirstPlayer,
     lockedIn: false,
+    joinedMidRound: isMidRound,
     ready: false,
   };
 
   table.players.push(player);
-  addSystemMessage(tableId, `${playerName} joined the table`);
+  
+  if (isMidRound) {
+    addSystemMessage(tableId, `${playerName} joined (will play next round)`);
+  } else {
+    addSystemMessage(tableId, `${playerName} joined the table`);
+  }
+  
   return player;
 }
 
@@ -157,9 +179,12 @@ export function addGuess(tableId: string, playerId: string, text: string, locked
 
   const player = table.players.find((p) => p.id === playerId);
   if (!player) return false;
-
+  
   // If player is already locked in, reject (no-op false)
   if (player.lockedIn) return false;
+  
+  // If player joined mid-round, they cannot participate in current clip
+  if (player.joinedMidRound) return false;
 
   // Remove previous guess from this player
   table.guesses = table.guesses.filter((g) => g.playerId !== playerId);
@@ -246,9 +271,15 @@ export function startRound(tableId: string, clipId: string): boolean {
   table.waitingForReady = true; // Wait for ready handshake
   table.readyDeadline = Date.now() + READY_TIMEOUT_SEC * 1000; // Set timeout
   
-  // Reset all players' locked-in and ready state
+  // Set phase timing (will start counting when all players ready)
+  const now = Date.now();
+  table.phaseStartTime = now;
+  table.phaseDeadline = now + PHASE_DURATIONS.playing;
+  
+  // Reset all players' locked-in state, clear mid-round join flags, and reset ready
   table.players.forEach((p) => {
     p.lockedIn = false;
+    p.joinedMidRound = false;
     p.ready = false;
   });
   
@@ -276,6 +307,11 @@ export function lockGuesses(tableId: string): boolean {
   table.phase = "judging";
   table.clipPlaying = false;
   
+  // Set phase timing
+  const now = Date.now();
+  table.phaseStartTime = now;
+  table.phaseDeadline = now + PHASE_DURATIONS.judging;
+  
   // Lock all submitted guesses
   table.guesses.forEach((g) => (g.locked = true));
   table.players.forEach((p) => {
@@ -295,6 +331,11 @@ export function revealTitle(tableId: string): boolean {
   table.phase = "reveal";
   table.revealedTitle = true;
   
+  // Set phase timing
+  const now = Date.now();
+  table.phaseStartTime = now;
+  table.phaseDeadline = now + PHASE_DURATIONS.reveal;
+  
   addSystemMessage(tableId, "Title revealed");
   return true;
 }
@@ -310,12 +351,15 @@ export function resetRound(tableId: string): boolean {
   table.clipPosition = 0;
   table.revealedTitle = false;
   table.sessionPaused = false;
+  table.phaseStartTime = null;
+  table.phaseDeadline = null;
   table.waitingForReady = false;
   table.readyDeadline = null;
   
-  // Reset all players' locked-in and ready state
+  // Reset all players' locked-in state, clear mid-round flags, and reset ready
   table.players.forEach((p) => {
     p.lockedIn = false;
+    p.joinedMidRound = false;
     p.ready = false;
   });
   
@@ -355,12 +399,15 @@ export function restartSession(tableId: string): boolean {
   table.clipPosition = 0;
   table.revealedTitle = false;
   table.sessionPaused = false;
+  table.phaseStartTime = null;
+  table.phaseDeadline = null;
   table.waitingForReady = false;
   table.readyDeadline = null;
   
-  // Reset all players' locked-in and ready state but keep scores
+  // Reset all players' locked-in state, mid-round flags, and ready state but keep scores
   table.players.forEach((p) => {
     p.lockedIn = false;
+    p.joinedMidRound = false;
     p.ready = false;
   });
   
