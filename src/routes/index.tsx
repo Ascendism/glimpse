@@ -81,14 +81,19 @@ function Index() {
 
   // Calculate time remaining in current phase
   useEffect(() => {
-    if (!gameState?.phaseDeadline || gameState.sessionPaused) {
+    // Use routine deadline if routine is running, otherwise fall back to manual phase deadline
+    const deadline = gameState?.routine?.status === "running" 
+      ? gameState.routine.phaseDeadline 
+      : gameState?.phaseDeadline;
+      
+    if (!deadline || gameState?.sessionPaused) {
       setTimeRemaining(null);
       return;
     }
     
     const updateTimer = () => {
       const now = Date.now();
-      const remaining = Math.max(0, gameState.phaseDeadline! - now);
+      const remaining = Math.max(0, deadline - now);
       setTimeRemaining(remaining);
     };
     
@@ -96,7 +101,7 @@ function Index() {
     const timer = window.setInterval(updateTimer, 100); // Update every 100ms for smooth countdown
     
     return () => clearInterval(timer);
-  }, [gameState?.phaseDeadline, gameState?.sessionPaused]);
+  }, [gameState?.phaseDeadline, gameState?.routine?.phaseDeadline, gameState?.routine?.status, gameState?.sessionPaused]);
 
   const rows: Cell[][] = useMemo(
     () => (currentClip ? layoutPhrase(currentClip.title) : []),
@@ -523,7 +528,7 @@ function Index() {
                     Waiting for all players to load video...
                   </p>
                   <p className="text-sm text-white/60 mt-1">
-                    {gameState.players.filter(p => p.ready).length} / {gameState.players.length} ready
+                    {gameState.players.filter(p => !p.joinedMidRound && p.ready).length} / {gameState.players.filter(p => !p.joinedMidRound).length} ready
                   </p>
                   {readyTimeRemaining !== null && (
                     <p className={cn(
@@ -658,7 +663,7 @@ function Index() {
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-white/60">Locked In</span>
                       <span className="font-display text-white/90">
-                        {gameState.players.filter(p => p.lockedIn).length} / {gameState.players.length}
+                        {gameState.players.filter(p => !p.joinedMidRound && p.lockedIn).length} / {gameState.players.filter(p => !p.joinedMidRound).length}
                       </span>
                     </div>
                   </div>

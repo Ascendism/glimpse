@@ -43,14 +43,19 @@ function StageView() {
   
   // Calculate time remaining in current phase
   useEffect(() => {
-    if (!gameState?.phaseDeadline || gameState.sessionPaused) {
+    // Use routine deadline if routine is running, otherwise fall back to manual phase deadline
+    const deadline = gameState?.routine?.status === "running" 
+      ? gameState.routine.phaseDeadline 
+      : gameState?.phaseDeadline;
+      
+    if (!deadline || gameState?.sessionPaused) {
       setTimeRemaining(null);
       return;
     }
     
     const updateTimer = () => {
       const now = Date.now();
-      const remaining = Math.max(0, gameState.phaseDeadline! - now);
+      const remaining = Math.max(0, deadline - now);
       setTimeRemaining(remaining);
     };
     
@@ -58,7 +63,7 @@ function StageView() {
     const timer = window.setInterval(updateTimer, 100);
     
     return () => clearInterval(timer);
-  }, [gameState?.phaseDeadline, gameState?.sessionPaused]);
+  }, [gameState?.phaseDeadline, gameState?.routine?.phaseDeadline, gameState?.routine?.status, gameState?.sessionPaused]);
 
   const fetchGameState = useCallback(async () => {
     if (!tableId) return;

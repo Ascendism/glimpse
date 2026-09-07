@@ -431,9 +431,10 @@ export function reportPlayerReady(
 
   player.ready = true;
 
-  // Check if all players are now ready
-  if (table.waitingForReady && table.players.every((p) => p.ready)) {
-    // All players ready - start playback!
+  // Check if all participating players are now ready (exclude mid-round joiners)
+  const participatingPlayers = table.players.filter((p) => !p.joinedMidRound);
+  if (table.waitingForReady && participatingPlayers.every((p) => p.ready)) {
+    // All participating players ready - start playback!
     table.waitingForReady = false;
     table.readyDeadline = null; // Clear timeout
     table.clipPlaying = true;
@@ -468,10 +469,12 @@ export function forceStartAnyway(tableId: string): boolean {
       Date.now() + table.routine.config.guessDurationSec * 1000;
   }
   
-  const readyCount = table.players.filter((p) => p.ready).length;
+  // Count only participating players for accurate ready status
+  const participatingPlayers = table.players.filter((p) => !p.joinedMidRound);
+  const readyCount = participatingPlayers.filter((p) => p.ready).length;
   addSystemMessage(
     tableId,
-    `Host started anyway (${readyCount}/${table.players.length} ready)`
+    `Host started anyway (${readyCount}/${participatingPlayers.length} ready)`
   );
   
   return true;
