@@ -22,7 +22,9 @@ export const createTable = createServerFn("POST", async () => {
 });
 
 export const fetchGameState = createServerFn("GET", async (tableId: string) => {
-  const table = getTable(tableId);
+  // Normalize table code to uppercase
+  const normalizedTableId = tableId.toUpperCase();
+  const table = getTable(normalizedTableId);
   if (!table) {
     throw new Error("Table not found");
   }
@@ -32,17 +34,38 @@ export const fetchGameState = createServerFn("GET", async (tableId: string) => {
 export const joinTable = createServerFn(
   "POST",
   async ({ tableId, playerName }: { tableId: string; playerName: string }) => {
-    const player = joinTableInMemory(tableId, playerName);
+    // Normalize table code to uppercase
+    const normalizedTableId = tableId.toUpperCase();
+    const player = joinTableInMemory(normalizedTableId, playerName);
     if (!player) {
       throw new Error("Table not found");
     }
-    return { player };
+    return { player, tableId: normalizedTableId };
   },
 );
 
 export const submitGuess = createServerFn(
   "POST",
   async ({ tableId, playerId, text, locked }: { tableId: string; playerId: string; text: string; locked?: boolean }) => {
+    const table = getTable(tableId);
+    if (!table) {
+      throw new Error("Table not found");
+    }
+    
+    // Server-side guards
+    if (table.phase !== "playing") {
+      throw new Error("Cannot guess: game is not in playing phase");
+    }
+    
+    if (table.sessionPaused) {
+      throw new Error("Cannot guess: session is paused");
+    }
+    
+    const player = table.players.find((p) => p.id === playerId);
+    if (player?.lockedIn && locked) {
+      throw new Error("Cannot guess: you are already locked in");
+    }
+    
     const success = addGuessInMemory(tableId, playerId, text, locked ?? false);
     if (!success) {
       throw new Error("Failed to add guess");
@@ -54,7 +77,11 @@ export const submitGuess = createServerFn(
 export const sendChatMessage = createServerFn(
   "POST",
   async ({ tableId, playerId, text }: { tableId: string; playerId: string; text: string }) => {
-    const success = addChatMessageInMemory(tableId, playerId, text);
+    if (!text || !text.trim()) {
+      throw new Error("Cannot send empty message");
+    }
+    
+    const success = addChatMessageInMemory(tableId, playerId, text.trim());
     if (!success) {
       throw new Error("Failed to send message");
     }
@@ -73,20 +100,25 @@ export const performHostAction = createServerFn(
     tableId: string;
     action: string;
     payload?: Record<string, unknown>;
-    playerId?: string;
+    playerId: string;
   }) => {
-    // Verify player is host (basic authorization)
+    // Verify player is host (required authorization)
+    if (!playerId) {
+      throw new Error("Unauthorized: playerId is required");
+    }
+    
     const table = getTable(tableId);
     if (!table) {
       throw new Error("Table not found");
     }
     
-    // Check if playerId is provided and is host
-    if (playerId) {
-      const player = table.players.find((p) => p.id === playerId);
-      if (!player || !player.isHost) {
-        throw new Error("Unauthorized: Only host can perform this action");
-      }
+    const player = table.players.find((p) => p.id === playerId);
+    if (!player) {
+      throw new Error("Unauthorized: Player not found");
+    }
+    
+    if (!player.isHost) {
+      throw new Error("Unauthorized: Only host can perform this action");
     }
 
     let success = false;

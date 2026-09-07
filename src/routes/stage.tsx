@@ -41,30 +41,32 @@ function StageView() {
   const fetchGameState = useCallback(async () => {
     if (!tableId) return;
     try {
-      const data = await fetchGameStateAction(tableId);
+      const normalizedId = tableId.toUpperCase();
+      const data = await fetchGameStateAction(normalizedId);
       setGameState(data.table);
-
-      // Auto-reveal when phase is reveal
-      if (data.table.phase === "reveal" && data.table.revealedTitle) {
-        const ids: string[] = [];
-        const newRows = currentClip ? layoutPhrase(currentClip.title) : [];
-        newRows.forEach((row, r) =>
-          row.forEach((cell, c) => {
-            if (cell.kind === "letter") ids.push(`${r}-${c}`);
-          }),
-        );
-        const nextDelays: Record<string, number> = {};
-        ids.forEach((id, i) => (nextDelays[id] = i * 110));
-        setDelays(nextDelays);
-        setRevealed(new Set(ids));
-      } else if (data.table.phase !== "reveal") {
-        setRevealed(new Set());
-        setDelays({});
-      }
     } catch (error) {
       console.error("Failed to fetch game state:", error);
     }
-  }, [tableId, currentClip]);
+  }, [tableId]);
+
+  // Auto-reveal when phase is reveal (separate effect for clean logic)
+  useEffect(() => {
+    if (gameState?.phase === "reveal" && gameState.revealedTitle && currentClip) {
+      const ids: string[] = [];
+      rows.forEach((row, r) =>
+        row.forEach((cell, c) => {
+          if (cell.kind === "letter") ids.push(`${r}-${c}`);
+        }),
+      );
+      const nextDelays: Record<string, number> = {};
+      ids.forEach((id, i) => (nextDelays[id] = i * 110));
+      setDelays(nextDelays);
+      setRevealed(new Set(ids));
+    } else if (gameState?.phase !== "reveal") {
+      setRevealed(new Set());
+      setDelays({});
+    }
+  }, [gameState?.phase, gameState?.revealedTitle, currentClip, rows]);
 
   useEffect(() => {
     if (tableId) {
@@ -129,12 +131,14 @@ function StageView() {
             {gameState?.currentClipId &&
               currentClip?.youtubeId &&
               gameState.phase !== "reveal" && (
-                <div className="board-frame aspect-video">
+                <div className="board-frame aspect-video relative">
                   <iframe
-                    src={`https://www.youtube.com/embed/${currentClip.youtubeId}?autoplay=${gameState.clipPlaying ? 1 : 0}&start=${Math.floor(gameState.clipPosition)}`}
+                    key={currentClip.youtubeId}
+                    src={`https://www.youtube.com/embed/${currentClip.youtubeId}?autoplay=0&enablejsapi=1`}
                     className="h-full w-full rounded"
                     allow="autoplay; encrypted-media"
                     allowFullScreen
+                    title="Glimpse Clip"
                   />
                 </div>
               )}

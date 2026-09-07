@@ -44,8 +44,15 @@ export const Route = createFileRoute("/")({
 function Index() {
   const navigate = useNavigate();
   const { table: tableIdFromUrl } = useSearch({ from: "/" });
-  const [tableId, setTableId] = useState<string | null>(tableIdFromUrl ?? null);
-  const [playerId, setPlayerId] = useState<string | null>(null);
+  
+  // Session storage for seat persistence
+  const [tableId, setTableId] = useState<string | null>(() => {
+    if (tableIdFromUrl) return tableIdFromUrl.toUpperCase();
+    return sessionStorage.getItem("glimpse_tableId");
+  });
+  const [playerId, setPlayerId] = useState<string | null>(() => {
+    return sessionStorage.getItem("glimpse_playerId");
+  });
   const [playerName, setPlayerName] = useState("");
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [guessInput, setGuessInput] = useState("");
@@ -65,6 +72,25 @@ function Index() {
     () => (currentClip ? layoutPhrase(currentClip.title) : []),
     [currentClip],
   );
+
+  // Auto-reveal tiles for all clients when phase is reveal
+  useEffect(() => {
+    if (gameState?.phase === "reveal" && gameState.revealedTitle && currentClip) {
+      const ids: string[] = [];
+      rows.forEach((row, r) =>
+        row.forEach((cell, c) => {
+          if (cell.kind === "letter") ids.push(`${r}-${c}`);
+        }),
+      );
+      const nextDelays: Record<string, number> = {};
+      ids.forEach((id, i) => (nextDelays[id] = i * 110));
+      setDelays(nextDelays);
+      setRevealed(new Set(ids));
+    } else if (gameState?.phase !== "reveal") {
+      setRevealed(new Set());
+      setDelays({});
+    }
+  }, [gameState?.phase, gameState?.revealedTitle, currentClip, rows]);
 
   const fetchGameState = useCallback(async () => {
     if (!tableId) return;
@@ -89,8 +115,10 @@ function Index() {
   const createTable = async () => {
     try {
       const data = await createTableAction();
-      setTableId(data.tableId);
-      navigate({ search: { table: data.tableId } });
+      const normalizedId = data.tableId.toUpperCase();
+      setTableId(normalizedId);
+      sessionStorage.setItem("glimpse_tableId", normalizedId);
+      navigate({ search: { table: normalizedId } });
     } catch (error) {
       console.error("Failed to create table:", error);
     }
@@ -103,7 +131,13 @@ function Index() {
     try {
       const data = await joinTableAction({ tableId, playerName: playerName.trim() });
       if (data.player) {
+        const normalizedId = data.tableId.toUpperCase();
         setPlayerId(data.player.id);
+        setTableId(normalizedId);
+        // Save to sessionStorage for refresh persistence
+        sessionStorage.setItem("glimpse_tableId", normalizedId);
+        sessionStorage.setItem("glimpse_playerId", data.player.id);
+        sessionStorage.setItem("glimpse_playerName", data.player.name);
       }
     } catch (error) {
       console.error("Failed to join table:", error);
@@ -150,22 +184,12 @@ function Index() {
   const startRound = (clipId: string) => hostAction("start_round", { clipId });
   const lockGuesses = () => hostAction("lock_guesses");
   const revealTitle = () => {
+    // Just call host action; useEffect will handle reveal animation for all clients
     hostAction("reveal_title");
-    const ids: string[] = [];
-    rows.forEach((row, r) =>
-      row.forEach((cell, c) => {
-        if (cell.kind === "letter") ids.push(`${r}-${c}`);
-      }),
-    );
-    const nextDelays: Record<string, number> = {};
-    ids.forEach((id, i) => (nextDelays[id] = i * 110));
-    setDelays(nextDelays);
-    setRevealed(new Set(ids));
   };
   const resetRound = () => {
+    // Just call host action; useEffect will handle cleanup
     hostAction("reset_round");
-    setRevealed(new Set());
-    setDelays({});
   };
   const updateScore = (pId: string, score: number) =>
     hostAction("update_score", { playerId: pId, score });
@@ -173,9 +197,8 @@ function Index() {
   const resumeSession = () => hostAction("resume_session");
   const restartSession = () => {
     if (confirm("Restart session? This will clear the current round and return to lobby.")) {
+      // Just call host action; useEffect will handle cleanup
       hostAction("restart_session");
-      setRevealed(new Set());
-      setDelays({});
     }
   };
 
@@ -323,11 +346,18 @@ function Index() {
             {gameState?.currentClipId && currentClip?.youtubeId && gameState.phase !== "reveal" && (
               <div className="board-frame aspect-video">
                 <iframe
-                  src={`https://www.youtube.com/embed/${currentClip.youtubeId}?autoplay=${gameState.clipPlaying ? 1 : 0}&start=${Math.floor(gameState.clipPosition)}`}
+                  key={currentClip.youtubeId}
+                  src={`https://www.youtube.com/embed/${currentClip.youtubeId}?autoplay=0&enablejsapi=1`}
                   className="h-full w-full rounded"
                   allow="autoplay; encrypted-media"
                   allowFullScreen
+                  title="Glimpse Clip"
                 />
+                {!gameState.clipPlaying && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white text-sm">
+                    Click video to play (autoplay may be blocked by browser)
+                  </div>
+                )}
               </div>
             )}
 

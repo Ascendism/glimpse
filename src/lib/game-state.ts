@@ -45,9 +45,19 @@ export type GameState = {
 };
 
 // In-memory game state (replace with a database in production)
-const tables = new Map<string, GameState>();
+// Hang on globalThis to survive HMR in dev
+declare global {
+  // eslint-disable-next-line no-var
+  var __glimpseTables: Map<string, GameState> | undefined;
+}
+
+const tables = globalThis.__glimpseTables ?? new Map<string, GameState>();
+if (!globalThis.__glimpseTables) {
+  globalThis.__glimpseTables = tables;
+}
 
 export function createTable(): string {
+  // Generate uppercase table code
   const tableId = Math.random().toString(36).substring(2, 8).toUpperCase();
   tables.set(tableId, {
     tableId,
@@ -64,8 +74,13 @@ export function createTable(): string {
   return tableId;
 }
 
+export function getTable(tableId: string): GameState | undefined {
+  // Normalize lookup to uppercase
+  return tables.get(tableId.toUpperCase());
+}
+
 function addSystemMessage(tableId: string, text: string): void {
-  const table = tables.get(tableId);
+  const table = getTable(tableId);
   if (!table) return;
 
   const message: ChatMessage = {
@@ -80,12 +95,8 @@ function addSystemMessage(tableId: string, text: string): void {
   table.chat.push(message);
 }
 
-export function getTable(tableId: string): GameState | undefined {
-  return tables.get(tableId);
-}
-
 export function joinTable(tableId: string, playerName: string): Player | null {
-  const table = tables.get(tableId);
+  const table = getTable(tableId);
   if (!table) return null;
 
   const playerId = Math.random().toString(36).substring(2, 15);
@@ -103,7 +114,7 @@ export function joinTable(tableId: string, playerName: string): Player | null {
 }
 
 export function updateTable(tableId: string, updates: Partial<GameState>): boolean {
-  const table = tables.get(tableId);
+  const table = getTable(tableId);
   if (!table) return false;
 
   Object.assign(table, updates);
@@ -111,7 +122,7 @@ export function updateTable(tableId: string, updates: Partial<GameState>): boole
 }
 
 export function addGuess(tableId: string, playerId: string, text: string, locked: boolean = false): boolean {
-  const table = tables.get(tableId);
+  const table = getTable(tableId);
   if (!table) return false;
 
   const player = table.players.find((p) => p.id === playerId);
@@ -144,7 +155,7 @@ export function addChatMessage(
   playerId: string,
   text: string,
 ): boolean {
-  const table = tables.get(tableId);
+  const table = getTable(tableId);
   if (!table) return false;
 
   const player = table.players.find((p) => p.id === playerId);
@@ -168,7 +179,7 @@ export function updatePlayerScore(
   playerId: string,
   score: number,
 ): boolean {
-  const table = tables.get(tableId);
+  const table = getTable(tableId);
   if (!table) return false;
 
   const player = table.players.find((p) => p.id === playerId);
@@ -189,7 +200,7 @@ export function updatePlayerScore(
 }
 
 export function startRound(tableId: string, clipId: string): boolean {
-  const table = tables.get(tableId);
+  const table = getTable(tableId);
   if (!table) return false;
 
   table.currentClipId = clipId;
@@ -212,7 +223,7 @@ export function setClipState(
   playing: boolean,
   position: number,
 ): boolean {
-  const table = tables.get(tableId);
+  const table = getTable(tableId);
   if (!table) return false;
 
   table.clipPlaying = playing;
@@ -221,7 +232,7 @@ export function setClipState(
 }
 
 export function lockGuesses(tableId: string): boolean {
-  const table = tables.get(tableId);
+  const table = getTable(tableId);
   if (!table) return false;
 
   table.phase = "judging";
@@ -240,7 +251,7 @@ export function lockGuesses(tableId: string): boolean {
 }
 
 export function revealTitle(tableId: string): boolean {
-  const table = tables.get(tableId);
+  const table = getTable(tableId);
   if (!table) return false;
 
   table.phase = "reveal";
@@ -251,7 +262,7 @@ export function revealTitle(tableId: string): boolean {
 }
 
 export function resetRound(tableId: string): boolean {
-  const table = tables.get(tableId);
+  const table = getTable(tableId);
   if (!table) return false;
 
   table.currentClipId = null;
@@ -270,7 +281,7 @@ export function resetRound(tableId: string): boolean {
 }
 
 export function pauseSession(tableId: string): boolean {
-  const table = tables.get(tableId);
+  const table = getTable(tableId);
   if (!table) return false;
 
   table.sessionPaused = true;
@@ -281,7 +292,7 @@ export function pauseSession(tableId: string): boolean {
 }
 
 export function resumeSession(tableId: string): boolean {
-  const table = tables.get(tableId);
+  const table = getTable(tableId);
   if (!table) return false;
 
   table.sessionPaused = false;
@@ -291,7 +302,7 @@ export function resumeSession(tableId: string): boolean {
 }
 
 export function restartSession(tableId: string): boolean {
-  const table = tables.get(tableId);
+  const table = getTable(tableId);
   if (!table) return false;
 
   table.currentClipId = null;
