@@ -90,7 +90,7 @@ export function GlimpsePlayer({
         playerRef.current = null;
       }
     };
-  }, [youtubeId]);
+  }, [youtubeId, onReady]);
 
   // Controller (host): report position periodically
   useEffect(() => {
