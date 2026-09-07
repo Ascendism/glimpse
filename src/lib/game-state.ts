@@ -128,6 +128,9 @@ export function addGuess(tableId: string, playerId: string, text: string, locked
   const player = table.players.find((p) => p.id === playerId);
   if (!player) return false;
 
+  // If player is already locked in, reject (no-op false)
+  if (player.lockedIn) return false;
+
   // Remove previous guess from this player
   table.guesses = table.guesses.filter((g) => g.playerId !== playerId);
 

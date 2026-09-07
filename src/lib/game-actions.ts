@@ -16,9 +16,18 @@ import {
   restartSession as restartSessionInMemory,
 } from "./game-state";
 
-export const createTable = createServerFn("POST", async () => {
+export const createTable = createServerFn("POST", async ({ hostName }: { hostName?: string }) => {
   const tableId = createTableInMemory();
-  return { tableId };
+  
+  // If hostName provided, auto-join the host
+  if (hostName && hostName.trim()) {
+    const player = joinTableInMemory(tableId, hostName.trim());
+    if (player) {
+      return { tableId, player };
+    }
+  }
+  
+  return { tableId, player: null };
 });
 
 export const fetchGameState = createServerFn("GET", async (tableId: string) => {
@@ -47,7 +56,9 @@ export const joinTable = createServerFn(
 export const submitGuess = createServerFn(
   "POST",
   async ({ tableId, playerId, text, locked }: { tableId: string; playerId: string; text: string; locked?: boolean }) => {
-    const table = getTable(tableId);
+    // Normalize tableId to uppercase
+    const normalizedTableId = tableId.toUpperCase();
+    const table = getTable(normalizedTableId);
     if (!table) {
       throw new Error("Table not found");
     }
@@ -62,11 +73,12 @@ export const submitGuess = createServerFn(
     }
     
     const player = table.players.find((p) => p.id === playerId);
-    if (player?.lockedIn && locked) {
+    // If already locked in, reject ANY further guess (update or lock)
+    if (player?.lockedIn) {
       throw new Error("Cannot guess: you are already locked in");
     }
     
-    const success = addGuessInMemory(tableId, playerId, text, locked ?? false);
+    const success = addGuessInMemory(normalizedTableId, playerId, text, locked ?? false);
     if (!success) {
       throw new Error("Failed to add guess");
     }
@@ -81,7 +93,9 @@ export const sendChatMessage = createServerFn(
       throw new Error("Cannot send empty message");
     }
     
-    const success = addChatMessageInMemory(tableId, playerId, text.trim());
+    // Normalize tableId to uppercase
+    const normalizedTableId = tableId.toUpperCase();
+    const success = addChatMessageInMemory(normalizedTableId, playerId, text.trim());
     if (!success) {
       throw new Error("Failed to send message");
     }
@@ -107,7 +121,9 @@ export const performHostAction = createServerFn(
       throw new Error("Unauthorized: playerId is required");
     }
     
-    const table = getTable(tableId);
+    // Normalize tableId to uppercase
+    const normalizedTableId = tableId.toUpperCase();
+    const table = getTable(normalizedTableId);
     if (!table) {
       throw new Error("Table not found");
     }
@@ -125,35 +141,35 @@ export const performHostAction = createServerFn(
 
     switch (action) {
       case "start_round":
-        success = startRoundInMemory(tableId, payload?.clipId as string);
+        success = startRoundInMemory(normalizedTableId, payload?.clipId as string);
         break;
       case "lock_guesses":
-        success = lockGuessesInMemory(tableId);
+        success = lockGuessesInMemory(normalizedTableId);
         break;
       case "reveal_title":
-        success = revealTitleInMemory(tableId);
+        success = revealTitleInMemory(normalizedTableId);
         break;
       case "reset_round":
-        success = resetRoundInMemory(tableId);
+        success = resetRoundInMemory(normalizedTableId);
         break;
       case "update_score":
-        success = updatePlayerScore(tableId, payload?.playerId as string, payload?.score as number);
+        success = updatePlayerScore(normalizedTableId, payload?.playerId as string, payload?.score as number);
         break;
       case "set_clip_state":
         success = setClipStateInMemory(
-          tableId,
+          normalizedTableId,
           payload?.playing as boolean,
           payload?.position as number,
         );
         break;
       case "pause_session":
-        success = pauseSessionInMemory(tableId);
+        success = pauseSessionInMemory(normalizedTableId);
         break;
       case "resume_session":
-        success = resumeSessionInMemory(tableId);
+        success = resumeSessionInMemory(normalizedTableId);
         break;
       case "restart_session":
-        success = restartSessionInMemory(tableId);
+        success = restartSessionInMemory(normalizedTableId);
         break;
       default:
         throw new Error("Unknown action");

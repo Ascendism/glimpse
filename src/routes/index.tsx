@@ -118,14 +118,27 @@ function Index() {
     }
   }, [tableId, fetchGameState]);
 
-  const createTable = async () => {
+  const createTable = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!playerName.trim()) return;
+    
     try {
-      const data = await createTableAction();
+      const data = await createTableAction({ hostName: playerName.trim() });
       const normalizedId = data.tableId.toUpperCase();
       setTableId(normalizedId);
-      if (typeof window !== "undefined") {
+      
+      // If host auto-joined, save player ID
+      if (data.player) {
+        setPlayerId(data.player.id);
+        if (typeof window !== "undefined") {
+          sessionStorage.setItem("glimpse_tableId", normalizedId);
+          sessionStorage.setItem("glimpse_playerId", data.player.id);
+          sessionStorage.setItem("glimpse_playerName", data.player.name);
+        }
+      } else if (typeof window !== "undefined") {
         sessionStorage.setItem("glimpse_tableId", normalizedId);
       }
+      
       navigate({ search: { table: normalizedId } });
     } catch (error) {
       console.error("Failed to create table:", error);
@@ -238,12 +251,23 @@ function Index() {
           <div className="w-full space-y-4">
             {!tableId ? (
               <div className="flex flex-col gap-3">
-                <Button
-                  onClick={createTable}
-                  className="w-full rounded-full bg-gradient-to-b from-gold to-gold-deep px-8 py-6 font-display text-2xl tracking-[0.15em] uppercase shadow-lg"
-                >
-                  Create Table
-                </Button>
+                <form onSubmit={createTable} className="flex flex-col gap-3">
+                  <Input
+                    value={playerName}
+                    onChange={(e) => setPlayerName(e.target.value)}
+                    placeholder="Your name (Host)..."
+                    className="rounded-full border-white/15 bg-white/5 px-4 py-3 text-center font-display text-xl tracking-wider placeholder:text-white/35"
+                    required
+                  />
+                  <Button
+                    type="submit"
+                    disabled={!playerName.trim()}
+                    className="w-full rounded-full bg-gradient-to-b from-gold to-gold-deep px-8 py-6 font-display text-2xl tracking-[0.15em] uppercase shadow-lg"
+                  >
+                    Create Table
+                  </Button>
+                </form>
+                <div className="text-center text-white/50 text-sm uppercase tracking-wider">or</div>
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
