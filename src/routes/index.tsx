@@ -663,7 +663,7 @@ function Index() {
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-white/60">Locked In</span>
                       <span className="font-display text-white/90">
-                        {gameState.players.filter(p => p.lockedIn).length} / {gameState.players.length}
+                        {gameState.players.filter(p => !p.joinedMidRound && p.lockedIn).length} / {gameState.players.filter(p => !p.joinedMidRound).length}
                       </span>
                     </div>
                   </div>
