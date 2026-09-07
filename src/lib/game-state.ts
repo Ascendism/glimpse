@@ -1015,7 +1015,23 @@ export function advanceToNextSegment(tableId: string): boolean {
   table.segmentLadder.currentSegmentIndex += 1;
   const newDuration = segmentDurations[table.segmentLadder.currentSegmentIndex];
 
+  // Clear advance votes when segment changes (whether by vote or host override)
+  if (table.voteState) {
+    table.voteState.advanceVotes = [];
+  }
+
   addSystemMessage(tableId, `Advanced to ${newDuration}s segment`);
+  saveTablesToDisk();
+  return true;
+}
+
+export function recalculateVoteThreshold(tableId: string): boolean {
+  const table = getTable(tableId);
+  if (!table || !table.voteState) return false;
+
+  const eligibleCount = table.players.filter((p) => !p.joinedMidRound).length;
+  table.voteState.threshold = Math.ceil(eligibleCount / 2);
+
   saveTablesToDisk();
   return true;
 }
@@ -1054,32 +1070,59 @@ export function castVote(tableId: string, playerId: string, voteType: "advance" 
   const table = getTable(tableId);
   if (!table || !table.voteState) return false;
 
+  // Validate player eligibility
   const player = table.players.find((p) => p.id === playerId);
-  if (!player || player.joinedMidRound) return false;
-
-  if (voteType === "advance") {
-    if (!table.voteState.advanceVotes.includes(playerId)) {
-      table.voteState.advanceVotes.push(playerId);
-    }
-  } else if (voteType === "hint") {
-    if (!table.voteState.hintVotes.includes(playerId)) {
-      table.voteState.hintVotes.push(playerId);
-    }
+  if (!player) return false; // Player not found
+  if (player.joinedMidRound) return false; // Mid-round joiners can't vote
+  
+  // Prevent duplicate votes (idempotent - same vote = no-op, not error)
+  const voteArray = voteType === "advance" ? table.voteState.advanceVotes : table.voteState.hintVotes;
+  if (voteArray.includes(playerId)) {
+    // Already voted - this is a no-op success
+    return true;
   }
+
+  // Add vote
+  if (voteType === "advance") {
+    table.voteState.advanceVotes.push(playerId);
+  } else if (voteType === "hint") {
+    table.voteState.hintVotes.push(playerId);
+  }
+
+  // Recalculate threshold based on current eligible players
+  // (in case players joined/left since vote state was initialized)
+  const eligibleCount = table.players.filter((p) => !p.joinedMidRound).length;
+  table.voteState.threshold = Math.ceil(eligibleCount / 2);
 
   // Check if threshold reached
   const votes = voteType === "advance" ? table.voteState.advanceVotes : table.voteState.hintVotes;
-  if (votes.length >= table.voteState.threshold) {
+  const thresholdMet = votes.length >= table.voteState.threshold;
+  
+  if (thresholdMet) {
     if (voteType === "advance") {
-      // Auto-advance segment
-      addSystemMessage(tableId, `Vote passed: advancing segment`);
-      advanceToNextSegment(tableId);
-      // Reset advance votes after successful advance
+      // Auto-advance segment if possible
+      const advanceSuccess = advanceToNextSegment(tableId);
+      if (advanceSuccess) {
+        addSystemMessage(
+          tableId, 
+          `Vote passed (${votes.length}/${table.voteState.threshold}): advancing segment`
+        );
+      } else {
+        addSystemMessage(
+          tableId, 
+          `Vote passed but already at final segment`
+        );
+      }
+      // Reset advance votes after execution (successful or not)
       table.voteState.advanceVotes = [];
     } else {
       // Reveal hint
-      addSystemMessage(tableId, `Vote passed: revealing hint`);
-      // TODO: Implement hint reveal logic in iteration 7+
+      addSystemMessage(
+        tableId, 
+        `Vote passed (${votes.length}/${table.voteState.threshold}): revealing hint`
+      );
+      // TODO: Wire actual hint reveal (e.g., reveal one letter from title)
+      // For now, stub as a system message
       table.voteState.hintVotes = [];
     }
   }

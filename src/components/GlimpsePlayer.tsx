@@ -215,6 +215,7 @@ export function GlimpsePlayer({
   }, [isController, onReport]);
 
   // Follower (non-host): sync to shared state with qbot withinPos tolerance
+  // Also respects segment bounds for consistent segment loop behavior
   useEffect(() => {
     if (isController || !playerRef.current) return;
 
@@ -232,10 +233,29 @@ export function GlimpsePlayer({
         const currentTime = playerRef.current.currentTime() || 0;
         const paused = playerRef.current.paused();
 
+        // Enforce segment bounds even for followers
+        // This prevents drift when host loops back but follower hasn't synced yet
+        const effectiveSegmentEnd = segmentDuration 
+          ? Math.min(timeStart + segmentDuration, timeEnd || Infinity)
+          : Infinity;
+        
+        let targetPosition = positionSec;
+        
+        // If we're way out of segment bounds, clamp to segment window before syncing
+        if (segmentDuration) {
+          if (currentTime >= effectiveSegmentEnd) {
+            // Loop back to start
+            targetPosition = timeStart;
+          } else if (currentTime < timeStart - 0.5) {
+            // Clamp to start
+            targetPosition = timeStart;
+          }
+        }
+
         // Check if we're out of sync with target position
-        if (!withinPos(currentTime, positionSec, 2)) {
+        if (!withinPos(currentTime, targetPosition, 2)) {
           // Seek to target position
-          playerRef.current.currentTime(positionSec);
+          playerRef.current.currentTime(targetPosition);
           
           // Match play/pause state
           if (playing && paused) {
@@ -266,33 +286,62 @@ export function GlimpsePlayer({
         clearInterval(syncIntervalRef.current);
       }
     };
-  }, [isController, playing, positionSec]);
+  }, [isController, playing, positionSec, segmentDuration, timeStart, timeEnd]);
 
   // Segment ladder: monitor playback and loop when reaching segment end
+  // Hardened with Video.js events for reliable seeking
   useEffect(() => {
-    if (!isController || !playerRef.current || !segmentDuration) return;
+    if (!playerRef.current || !segmentDuration) return;
 
-    const monitorInterval = window.setInterval(() => {
-      if (!playerRef.current) return;
+    const player = playerRef.current;
+    const segmentEnd = Math.min(timeStart + segmentDuration, timeEnd || Infinity);
+    
+    // Track if we're currently seeking to prevent re-entrant seeks
+    let isSeeking = false;
+
+    const handleTimeUpdate = () => {
+      if (!playerRef.current || isSeeking) return;
 
       try {
         const currentTime = playerRef.current.currentTime() || 0;
-        const segmentEnd = Math.min(timeStart + segmentDuration, timeEnd || Infinity);
 
-        // If we've passed the segment end, loop back to start
+        // Enforce segment bounds: loop if we've exceeded the segment window
         if (currentTime >= segmentEnd) {
+          isSeeking = true;
           playerRef.current.currentTime(timeStart);
-          console.log("[GlimpsePlayer] Looped segment:", timeStart, "→", segmentEnd);
+          console.log("[GlimpsePlayer] Looped segment:", timeStart, "→", segmentEnd, "from", currentTime.toFixed(2));
+        } else if (currentTime < timeStart - 0.5) {
+          // If somehow we're before the start (user manual seek), clamp to start
+          isSeeking = true;
+          playerRef.current.currentTime(timeStart);
+          console.log("[GlimpsePlayer] Clamped to segment start:", timeStart);
         }
       } catch (err) {
-        console.debug("Segment monitor error:", err);
+        console.debug("Segment timeupdate error:", err);
       }
-    }, 100); // Check frequently for tight loop
+    };
+
+    const handleSeeked = () => {
+      // Reset seeking flag once seek completes
+      isSeeking = false;
+    };
+
+    const handleSeeking = () => {
+      // Mark that we're seeking to prevent concurrent seeks
+      // Note: this handles both programmatic seeks and user manual seeks
+    };
+
+    // Use Video.js event API
+    player.on("timeupdate", handleTimeUpdate);
+    player.on("seeked", handleSeeked);
+    player.on("seeking", handleSeeking);
 
     return () => {
-      clearInterval(monitorInterval);
+      player.off("timeupdate", handleTimeUpdate);
+      player.off("seeked", handleSeeked);
+      player.off("seeking", handleSeeking);
     };
-  }, [isController, segmentDuration, timeStart, timeEnd]);
+  }, [segmentDuration, timeStart, timeEnd]);
 
   return (
     <div data-vjs-player className="vjs-glimpse-player">
