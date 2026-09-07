@@ -65,6 +65,7 @@ if (table.waitingForReady && participatingPlayers.every((p) => p.ready)) {
 
 1. `b78f9ef` - Fix phase countdown warnings during routine execution
 2. `bcee3c8` - Fix ready handshake with mid-routine joiners
+3. `1435728` - Fix locked-in counter to exclude mid-round joiners
 
 ## PR
 
