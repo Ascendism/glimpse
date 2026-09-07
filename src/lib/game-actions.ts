@@ -14,6 +14,13 @@ import {
   pauseSession as pauseSessionInMemory,
   resumeSession as resumeSessionInMemory,
   restartSession as restartSessionInMemory,
+  configureRoutine as configureRoutineInMemory,
+  startRoutine as startRoutineInMemory,
+  pauseRoutine as pauseRoutineInMemory,
+  resumeRoutine as resumeRoutineInMemory,
+  stopRoutine as stopRoutineInMemory,
+  skipPhase as skipPhaseInMemory,
+  type RoutineConfig,
 } from "./game-state";
 
 export const createTable = createServerFn({ method: "POST" })
@@ -171,6 +178,24 @@ export const performHostAction = createServerFn({ method: "POST" })
         break;
       case "restart_session":
         success = restartSessionInMemory(normalizedTableId);
+        break;
+      case "configure_routine":
+        success = configureRoutineInMemory(normalizedTableId, payload?.config as RoutineConfig);
+        break;
+      case "start_routine":
+        success = startRoutineInMemory(normalizedTableId);
+        break;
+      case "pause_routine":
+        success = pauseRoutineInMemory(normalizedTableId);
+        break;
+      case "resume_routine":
+        success = resumeRoutineInMemory(normalizedTableId);
+        break;
+      case "stop_routine":
+        success = stopRoutineInMemory(normalizedTableId);
+        break;
+      case "skip_phase":
+        success = skipPhaseInMemory(normalizedTableId);
         break;
       default:
         throw new Error("Unknown action");
