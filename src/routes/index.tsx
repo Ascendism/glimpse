@@ -16,9 +16,14 @@ import {
   advanceSegment as advanceSegmentAction,
   castVote as castVoteAction,
   addClipToLibrary as addClipToLibraryAction,
+  updateClipInLibrary as updateClipInLibraryAction,
+  removeClipFromLibrary as removeClipFromLibraryAction,
+  createPlaylist as createPlaylistAction,
+  updatePlaylist as updatePlaylistAction,
+  removePlaylist as removePlaylistAction,
 } from "@/lib/game-actions";
 import { getMatchHint } from "@/lib/match-helper";
-import { createYouTubeLibraryClip } from "@/lib/library";
+import { createYouTubeLibraryClip, isYouTubeMetadata, type LibraryClip, type Playlist } from "@/lib/library";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -85,10 +90,15 @@ function Index() {
     ? gameState.library.clips.find((c) => c.id === gameState.currentClipId)
     : null;
     
-  // Get YouTube metadata if available
-  const youtubeMetadata = currentClip?.metadata && "youtubeId" in currentClip.metadata 
-    ? currentClip.metadata 
-    : null;
+  // Get video metadata based on clip type
+  const clipMetadata = currentClip?.metadata;
+  const isYouTubeClip = clipMetadata && "youtubeId" in clipMetadata;
+  const isUploadClip = clipMetadata && "fileName" in clipMetadata;
+  
+  const youtubeId = isYouTubeClip ? clipMetadata.youtubeId : undefined;
+  const videoUrl = isUploadClip ? currentClip.source.id : undefined;
+  const timeStart = clipMetadata?.timeStart ?? 0;
+  const timeEnd = clipMetadata?.timeEnd;
     
   // Get current segment duration
   const currentSegmentDuration = gameState?.segmentLadder
@@ -271,6 +281,11 @@ function Index() {
   const [newClipCategory, setNewClipCategory] = useState("");
   const [newClipTimeStart, setNewClipTimeStart] = useState("0");
   const [newClipTimeEnd, setNewClipTimeEnd] = useState("60");
+  const [editingClipId, setEditingClipId] = useState<string | null>(null);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [showPlaylistManager, setShowPlaylistManager] = useState(false);
+  const [newPlaylistName, setNewPlaylistName] = useState("");
+  const [editingPlaylistId, setEditingPlaylistId] = useState<string | null>(null);
 
   const hostAction = async (action: string, payload: Record<string, unknown> = {}) => {
     if (!tableId || !isHost || !playerId) return;
@@ -344,6 +359,173 @@ function Index() {
     } catch (error) {
       console.error("Failed to add clip:", error);
     }
+  };
+
+  // Edit clip
+  const startEditClip = (clip: LibraryClip) => {
+    setEditingClipId(clip.id);
+    setNewClipTitle(clip.title);
+    setNewClipCategory(clip.category);
+    if (isYouTubeMetadata(clip.metadata)) {
+      setNewClipYoutubeId(clip.metadata.youtubeId);
+      setNewClipTimeStart(clip.metadata.timeStart.toString());
+      setNewClipTimeEnd(clip.metadata.timeEnd.toString());
+    }
+  };
+
+  const saveEditClip = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tableId || !editingClipId || !newClipTitle.trim()) return;
+
+    try {
+      const clip = gameState?.library.clips.find((c) => c.id === editingClipId);
+      if (!clip) return;
+
+      const updates: Partial<LibraryClip> = {
+        title: newClipTitle.trim(),
+        category: newClipCategory.trim() || "Uncategorized",
+      };
+
+      if (isYouTubeMetadata(clip.metadata)) {
+        updates.metadata = {
+          ...clip.metadata,
+          timeStart: parseInt(newClipTimeStart) || 0,
+          timeEnd: parseInt(newClipTimeEnd) || 60,
+        };
+      }
+
+      await updateClipInLibraryAction({ data: { tableId, clipId: editingClipId, updates } });
+
+      // Reset form
+      setEditingClipId(null);
+      setNewClipYoutubeId("");
+      setNewClipTitle("");
+      setNewClipCategory("");
+      setNewClipTimeStart("0");
+      setNewClipTimeEnd("60");
+    } catch (error) {
+      console.error("Failed to update clip:", error);
+    }
+  };
+
+  const cancelEditClip = () => {
+    setEditingClipId(null);
+    setNewClipYoutubeId("");
+    setNewClipTitle("");
+    setNewClipCategory("");
+    setNewClipTimeStart("0");
+    setNewClipTimeEnd("60");
+  };
+
+  // Delete clip
+  const deleteClip = async (clipId: string) => {
+    if (!tableId) return;
+    if (!confirm("Delete this clip? It will be removed from all playlists.")) return;
+
+    try {
+      await removeClipFromLibraryAction({ data: { tableId, clipId } });
+    } catch (error) {
+      console.error("Failed to delete clip:", error);
+    }
+  };
+
+  // Upload local file
+  const addUploadClip = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tableId || !uploadFile || !newClipTitle.trim()) return;
+
+    try {
+      // Create object URL for local playback
+      const fileUrl = URL.createObjectURL(uploadFile);
+      
+      // Get video duration (rough estimate or user input)
+      const duration = parseInt(newClipTimeEnd) || 60;
+
+      const clip: LibraryClip = {
+        id: `clip_${Math.random().toString(36).substring(2, 15)}`,
+        title: newClipTitle.trim(),
+        category: newClipCategory.trim() || "Uncategorized",
+        type: "Other",
+        source: {
+          type: "upload",
+          id: fileUrl,
+        },
+        metadata: {
+          fileName: uploadFile.name,
+          fileSize: uploadFile.size,
+          mimeType: uploadFile.type,
+          duration,
+          timeStart: parseInt(newClipTimeStart) || 0,
+          timeEnd: duration,
+        },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      await addClipToLibraryAction({ data: { tableId, clip } });
+
+      // Reset form
+      setUploadFile(null);
+      setNewClipTitle("");
+      setNewClipCategory("");
+      setNewClipTimeStart("0");
+      setNewClipTimeEnd("60");
+    } catch (error) {
+      console.error("Failed to add upload:", error);
+    }
+  };
+
+  // Playlist management
+  const createNewPlaylist = async () => {
+    if (!tableId || !newPlaylistName.trim()) return;
+
+    try {
+      await createPlaylistAction({ data: { tableId, name: newPlaylistName.trim(), clipIds: selectedPlaylist } });
+      setNewPlaylistName("");
+      setShowPlaylistManager(false);
+    } catch (error) {
+      console.error("Failed to create playlist:", error);
+    }
+  };
+
+  const renamePlaylist = async (playlistId: string, newName: string) => {
+    if (!tableId || !newName.trim()) return;
+
+    try {
+      await updatePlaylistAction({ data: { tableId, playlistId, updates: { name: newName.trim() } } });
+      setEditingPlaylistId(null);
+    } catch (error) {
+      console.error("Failed to rename playlist:", error);
+    }
+  };
+
+  const deletePlaylist = async (playlistId: string) => {
+    if (!tableId) return;
+    if (!confirm("Delete this playlist?")) return;
+
+    try {
+      await removePlaylistAction({ data: { tableId, playlistId } });
+    } catch (error) {
+      console.error("Failed to delete playlist:", error);
+    }
+  };
+
+  const moveClipInPlaylist = (clipId: string, direction: "up" | "down") => {
+    setSelectedPlaylist((prev) => {
+      const index = prev.indexOf(clipId);
+      if (index === -1) return prev;
+      
+      const newIndex = direction === "up" ? index - 1 : index + 1;
+      if (newIndex < 0 || newIndex >= prev.length) return prev;
+
+      const newPlaylist = [...prev];
+      [newPlaylist[index], newPlaylist[newIndex]] = [newPlaylist[newIndex]!, newPlaylist[index]!];
+      return newPlaylist;
+    });
+  };
+
+  const loadPlaylist = (playlist: Playlist) => {
+    setSelectedPlaylist([...playlist.clipIds]);
   };
   
   // Segment advance (host override)
@@ -581,17 +763,18 @@ function Index() {
               </div>
             )}
 
-            {gameState?.currentClipId && youtubeMetadata && gameState.phase !== "reveal" && (
+            {gameState?.currentClipId && clipMetadata && gameState.phase !== "reveal" && (
               <div className="board-frame aspect-video">
                 <GlimpsePlayer
-                  youtubeId={youtubeMetadata.youtubeId}
+                  youtubeId={youtubeId}
+                  videoUrl={videoUrl}
                   playing={gameState.clipPlaying}
                   positionSec={gameState.clipPosition}
                   isController={isHost}
                   onReport={isHost ? reportClipState : undefined}
                   onReady={reportReady}
-                  timeStart={youtubeMetadata.timeStart}
-                  timeEnd={youtubeMetadata.timeEnd}
+                  timeStart={timeStart}
+                  timeEnd={timeEnd}
                   segmentDuration={currentSegmentDuration}
                 />
               </div>
@@ -836,20 +1019,26 @@ function Index() {
 
                     {showManagement && (
                       <div className="space-y-3 rounded-lg border border-gold/20 bg-black/20 p-3">
-                        <h4 className="text-sm font-display uppercase tracking-wider text-gold">Add YouTube Clip</h4>
-                        <form onSubmit={addYouTubeClip} className="space-y-2">
+                        <h4 className="text-sm font-display uppercase tracking-wider text-gold">
+                          {editingClipId ? "Edit Clip" : "Add Clip"}
+                        </h4>
+                        
+                        {/* YouTube Clip Form */}
+                        <form onSubmit={editingClipId ? saveEditClip : addYouTubeClip} className="space-y-2">
                           <Input
                             value={newClipTitle}
                             onChange={(e) => setNewClipTitle(e.target.value)}
                             placeholder="Title (e.g., THE MATRIX)"
                             className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
                           />
-                          <Input
-                            value={newClipYoutubeId}
-                            onChange={(e) => setNewClipYoutubeId(e.target.value)}
-                            placeholder="YouTube ID (e.g., m8e-FF8MsqU)"
-                            className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
-                          />
+                          {!editingClipId && (
+                            <Input
+                              value={newClipYoutubeId}
+                              onChange={(e) => setNewClipYoutubeId(e.target.value)}
+                              placeholder="YouTube ID (e.g., m8e-FF8MsqU)"
+                              className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
+                            />
+                          )}
                           <Input
                             value={newClipCategory}
                             onChange={(e) => setNewClipCategory(e.target.value)}
@@ -878,47 +1067,290 @@ function Index() {
                               />
                             </div>
                           </div>
-                          <Button
-                            type="submit"
-                            className="w-full rounded-full bg-gold/20 hover:bg-gold/30 text-gold font-display text-sm"
-                          >
-                            Add Clip
-                          </Button>
+                          <div className="flex gap-2">
+                            <Button
+                              type="submit"
+                              className="flex-1 rounded-full bg-gold/20 hover:bg-gold/30 text-gold font-display text-sm"
+                            >
+                              {editingClipId ? "Save" : "Add YouTube"}
+                            </Button>
+                            {editingClipId && (
+                              <Button
+                                type="button"
+                                onClick={cancelEditClip}
+                                className="rounded-full bg-white/10 hover:bg-white/20 text-white/60 font-display text-sm px-4"
+                              >
+                                Cancel
+                              </Button>
+                            )}
+                          </div>
                         </form>
+
+                        {/* Upload Form */}
+                        {!editingClipId && (
+                          <>
+                            <div className="border-t border-white/10 pt-3">
+                              <h5 className="text-xs font-display uppercase tracking-wider text-gold/80 mb-2">
+                                Or Upload Local File
+                              </h5>
+                              <form onSubmit={addUploadClip} className="space-y-2">
+                                <Input
+                                  type="file"
+                                  accept="video/*"
+                                  onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                                  className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm text-white/70"
+                                />
+                                <Input
+                                  value={newClipTitle}
+                                  onChange={(e) => setNewClipTitle(e.target.value)}
+                                  placeholder="Title"
+                                  className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
+                                />
+                                <Input
+                                  value={newClipCategory}
+                                  onChange={(e) => setNewClipCategory(e.target.value)}
+                                  placeholder="Category"
+                                  className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
+                                />
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <label className="text-xs text-white/50">Start (s)</label>
+                                    <Input
+                                      type="number"
+                                      value={newClipTimeStart}
+                                      onChange={(e) => setNewClipTimeStart(e.target.value)}
+                                      placeholder="0"
+                                      className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-xs text-white/50">Duration (s)</label>
+                                    <Input
+                                      type="number"
+                                      value={newClipTimeEnd}
+                                      onChange={(e) => setNewClipTimeEnd(e.target.value)}
+                                      placeholder="60"
+                                      className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
+                                    />
+                                  </div>
+                                </div>
+                                <Button
+                                  type="submit"
+                                  disabled={!uploadFile}
+                                  className="w-full rounded-full bg-gold/20 hover:bg-gold/30 text-gold font-display text-sm disabled:opacity-50"
+                                >
+                                  Add Upload
+                                </Button>
+                              </form>
+                            </div>
+
+                            <div className="border-t border-white/10 pt-3">
+                              <h5 className="text-xs font-display uppercase tracking-wider text-gold/80 mb-2">
+                                Library ({gameState.library.clips.length} clips)
+                              </h5>
+                              <div className="space-y-1 max-h-40 overflow-y-auto">
+                                {gameState.library.clips.map((clip) => (
+                                  <div
+                                    key={clip.id}
+                                    className="flex items-center justify-between rounded border border-white/10 bg-white/5 px-2 py-1.5 text-xs"
+                                  >
+                                    <div className="flex-1 min-w-0">
+                                      <div className="font-semibold text-gold truncate">{clip.title}</div>
+                                      <div className="text-white/40 truncate">{clip.category}</div>
+                                    </div>
+                                    <div className="flex gap-1 ml-2">
+                                      <button
+                                        onClick={() => startEditClip(clip)}
+                                        className="rounded bg-gold/20 px-2 py-1 text-gold hover:bg-gold/30"
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        onClick={() => deleteClip(clip.id)}
+                                        className="rounded bg-red-500/20 px-2 py-1 text-red-300 hover:bg-red-500/30"
+                                      >
+                                        Del
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </>
+                        )}
                       </div>
                     )}
 
                     <div className="space-y-2">
-                      <label className="text-sm text-white/60 uppercase tracking-wider">
-                        Playlist ({selectedPlaylist.length} clips)
-                      </label>
-                      <div className="grid gap-2 sm:grid-cols-2 max-h-60 overflow-y-auto">
-                        {gameState.library.clips.map((clip) => (
-                          <button
-                            key={clip.id}
-                            onClick={() => toggleClipInPlaylist(clip.id)}
-                            className={cn(
-                              "rounded-lg border px-3 py-2 text-left text-sm transition-colors",
-                              selectedPlaylist.includes(clip.id)
-                                ? "border-gold/40 bg-gold/10"
-                                : "border-white/15 bg-white/5 hover:bg-white/10"
-                            )}
-                          >
-                            <div className="flex items-center justify-between">
-                              <div className="flex-1">
-                                <div className="font-semibold text-gold text-xs">{clip.title}</div>
-                                <div className="text-xs text-white/50">
-                                  {clip.category} · {clip.type}
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm text-white/60 uppercase tracking-wider">
+                          Playlist ({selectedPlaylist.length} clips)
+                        </label>
+                        <button
+                          onClick={() => setShowPlaylistManager(!showPlaylistManager)}
+                          className="text-xs text-gold hover:text-gold/80 font-display"
+                        >
+                          {showPlaylistManager ? "Hide" : "Manage"}
+                        </button>
+                      </div>
+
+                      {/* Playlist Manager */}
+                      {showPlaylistManager && (
+                        <div className="rounded-lg border border-gold/20 bg-black/20 p-2 space-y-2">
+                          <div className="flex gap-2">
+                            <Input
+                              value={newPlaylistName}
+                              onChange={(e) => setNewPlaylistName(e.target.value)}
+                              placeholder="New playlist name"
+                              className="flex-1 rounded border-white/15 bg-white/5 px-2 py-1 text-xs"
+                            />
+                            <Button
+                              onClick={createNewPlaylist}
+                              disabled={!newPlaylistName.trim()}
+                              className="rounded-full bg-gold/20 hover:bg-gold/30 text-gold text-xs px-3 disabled:opacity-50"
+                            >
+                              Save
+                            </Button>
+                          </div>
+                          
+                          {gameState.library.playlists.length > 0 && (
+                            <div className="space-y-1 max-h-32 overflow-y-auto">
+                              <div className="text-xs text-white/40 mb-1">Saved Playlists:</div>
+                              {gameState.library.playlists.map((playlist) => (
+                                <div
+                                  key={playlist.id}
+                                  className="flex items-center gap-2 rounded border border-white/10 bg-white/5 px-2 py-1"
+                                >
+                                  {editingPlaylistId === playlist.id ? (
+                                    <>
+                                      <Input
+                                        value={newPlaylistName}
+                                        onChange={(e) => setNewPlaylistName(e.target.value)}
+                                        className="flex-1 rounded border-white/15 bg-white/5 px-1 py-0.5 text-xs"
+                                      />
+                                      <button
+                                        onClick={() => {
+                                          renamePlaylist(playlist.id, newPlaylistName);
+                                          setNewPlaylistName("");
+                                        }}
+                                        className="text-xs text-gold hover:text-gold/80"
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setEditingPlaylistId(null);
+                                          setNewPlaylistName("");
+                                        }}
+                                        className="text-xs text-white/50 hover:text-white/70"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span className="flex-1 text-xs text-white/80 truncate">
+                                        {playlist.name} ({playlist.clipIds.length})
+                                      </span>
+                                      <button
+                                        onClick={() => loadPlaylist(playlist)}
+                                        className="text-xs text-gold hover:text-gold/80"
+                                      >
+                                        Load
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setEditingPlaylistId(playlist.id);
+                                          setNewPlaylistName(playlist.name);
+                                        }}
+                                        className="text-xs text-white/50 hover:text-white/70"
+                                      >
+                                        Rename
+                                      </button>
+                                      <button
+                                        onClick={() => deletePlaylist(playlist.id)}
+                                        className="text-xs text-red-300 hover:text-red-400"
+                                      >
+                                        Del
+                                      </button>
+                                    </>
+                                  )}
                                 </div>
-                              </div>
-                              {selectedPlaylist.includes(clip.id) && (
-                                <span className="ml-2 text-gold font-display">
-                                  {selectedPlaylist.indexOf(clip.id) + 1}
-                                </span>
-                              )}
+                              ))}
                             </div>
-                          </button>
-                        ))}
+                          )}
+                        </div>
+                      )}
+
+                      {/* Current Playlist - Click to toggle, with reorder buttons */}
+                      <div className="space-y-1 max-h-60 overflow-y-auto">
+                        <div className="text-xs text-white/40 mb-1">Click clips to add/remove:</div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {gameState.library.clips.map((clip) => (
+                            <button
+                              key={clip.id}
+                              onClick={() => toggleClipInPlaylist(clip.id)}
+                              className={cn(
+                                "rounded-lg border px-3 py-2 text-left text-sm transition-colors",
+                                selectedPlaylist.includes(clip.id)
+                                  ? "border-gold/40 bg-gold/10"
+                                  : "border-white/15 bg-white/5 hover:bg-white/10"
+                              )}
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-semibold text-gold text-xs truncate">{clip.title}</div>
+                                  <div className="text-xs text-white/50 truncate">
+                                    {clip.category} · {clip.type}
+                                  </div>
+                                </div>
+                                {selectedPlaylist.includes(clip.id) && (
+                                  <span className="ml-2 text-gold font-display">
+                                    {selectedPlaylist.indexOf(clip.id) + 1}
+                                  </span>
+                                )}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Playlist Order Controls */}
+                        {selectedPlaylist.length > 1 && (
+                          <div className="mt-2 rounded-lg border border-gold/20 bg-black/20 p-2">
+                            <div className="text-xs text-white/40 mb-1">Reorder:</div>
+                            <div className="space-y-1">
+                              {selectedPlaylist.map((clipId, index) => {
+                                const clip = gameState.library.clips.find((c) => c.id === clipId);
+                                if (!clip) return null;
+                                return (
+                                  <div
+                                    key={clipId}
+                                    className="flex items-center gap-2 rounded border border-white/10 bg-white/5 px-2 py-1"
+                                  >
+                                    <span className="text-xs text-gold font-display w-6">{index + 1}</span>
+                                    <span className="flex-1 text-xs text-white/80 truncate">{clip.title}</span>
+                                    <div className="flex gap-1">
+                                      <button
+                                        onClick={() => moveClipInPlaylist(clipId, "up")}
+                                        disabled={index === 0}
+                                        className="text-xs text-gold hover:text-gold/80 disabled:opacity-30 disabled:cursor-not-allowed"
+                                      >
+                                        ▲
+                                      </button>
+                                      <button
+                                        onClick={() => moveClipInPlaylist(clipId, "down")}
+                                        disabled={index === selectedPlaylist.length - 1}
+                                        className="text-xs text-gold hover:text-gold/80 disabled:opacity-30 disabled:cursor-not-allowed"
+                                      >
+                                        ▼
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
 
