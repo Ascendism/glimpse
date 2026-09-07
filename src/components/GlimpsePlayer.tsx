@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import videojs from "video.js";
 import "videojs-youtube";
 import "video.js/dist/video-js.css";
@@ -34,15 +34,23 @@ export function GlimpsePlayer({
   const reportIntervalRef = useRef<number | null>(null);
   const lastYoutubeIdRef = useRef<string>("");
   const readyReportedRef = useRef<boolean>(false);
+  const [isInitializing, setIsInitializing] = useState(false);
 
   // Initialize or recreate player when YouTube ID changes
   useEffect(() => {
     if (!videoRef.current) return;
 
+    // Skip if already initializing
+    if (isInitializing) return;
+
     // Dispose old player if YouTube ID changed
     if (lastYoutubeIdRef.current && lastYoutubeIdRef.current !== youtubeId) {
       if (playerRef.current) {
-        playerRef.current.dispose();
+        try {
+          playerRef.current.dispose();
+        } catch (err) {
+          console.warn("[GlimpsePlayer] Error disposing player:", err);
+        }
         playerRef.current = null;
       }
       readyReportedRef.current = false;
@@ -54,43 +62,87 @@ export function GlimpsePlayer({
     if (playerRef.current) return;
 
     // Initialize Video.js with YouTube tech (qbot-style)
-    const player = videojs(videoRef.current, {
-      techOrder: ["html5", "youtube"],
-      autoplay: false,
-      controls: true,
-      youtube: {
-        iv_load_policy: 3, // Disable annotations
-      },
-      sources: [
-        {
-          type: "video/youtube",
-          src: `https://www.youtube.com/watch?v=${youtubeId}`,
-        },
-      ],
-    });
+    setIsInitializing(true);
 
-    playerRef.current = player;
-
-    // Report ready when video can play
-    const handleReady = () => {
-      if (!readyReportedRef.current && onReady) {
-        readyReportedRef.current = true;
-        onReady();
+    // Delay initialization slightly to ensure DOM is fully ready
+    const initTimeout = setTimeout(() => {
+      if (!videoRef.current) {
+        setIsInitializing(false);
+        return;
       }
-    };
 
-    // Video.js 'loadeddata' or 'canplay' indicates video is ready
-    player.on("loadeddata", handleReady);
-    player.on("canplay", handleReady);
+      try {
+        const player = videojs(videoRef.current, {
+          techOrder: ["youtube"],
+          autoplay: false,
+          controls: true,
+          youtube: {
+            iv_load_policy: 3, // Disable annotations
+            modestbranding: 1,
+            rel: 0,
+          },
+          sources: [
+            {
+              type: "video/youtube",
+              src: `https://www.youtube.com/watch?v=${youtubeId}`,
+            },
+          ],
+        });
 
-    // Cleanup on unmount
+        playerRef.current = player;
+
+        // Report ready when video can play
+        const handleReady = () => {
+          if (!readyReportedRef.current && onReady) {
+            readyReportedRef.current = true;
+            onReady();
+          }
+        };
+
+        const handleLoadedData = () => {
+          console.log("[GlimpsePlayer] Video loaded:", youtubeId);
+          handleReady();
+        };
+
+        const handleCanPlay = () => {
+          console.log("[GlimpsePlayer] Video can play:", youtubeId);
+          handleReady();
+        };
+
+        const handleError = (err: unknown) => {
+          console.error("[GlimpsePlayer] Video error:", youtubeId, err);
+        };
+
+        // Video.js 'loadeddata' or 'canplay' indicates video is ready
+        player.on("loadeddata", handleLoadedData);
+        player.on("canplay", handleCanPlay);
+        player.on("error", handleError);
+
+        // YouTube tech specific ready event
+        player.ready(() => {
+          console.log("[GlimpsePlayer] Player ready:", youtubeId);
+          setIsInitializing(false);
+        });
+      } catch (err) {
+        console.error("[GlimpsePlayer] Error initializing player:", err);
+        setIsInitializing(false);
+      }
+    }, 100); // Small delay to ensure DOM is ready
+
+    // Cleanup on unmount or video change
     return () => {
+      clearTimeout(initTimeout);
       if (playerRef.current) {
-        playerRef.current.dispose();
+        try {
+          playerRef.current.dispose();
+        } catch (err) {
+          console.warn("[GlimpsePlayer] Error in cleanup:", err);
+        }
         playerRef.current = null;
       }
+      setIsInitializing(false);
     };
-  }, [youtubeId]);
+  }, [youtubeId, onReady]);
 
   // Controller (host): report position periodically
   useEffect(() => {
