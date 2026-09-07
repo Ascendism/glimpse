@@ -528,7 +528,7 @@ function Index() {
                     Waiting for all players to load video...
                   </p>
                   <p className="text-sm text-white/60 mt-1">
-                    {gameState.players.filter(p => p.ready).length} / {gameState.players.length} ready
+                    {gameState.players.filter(p => !p.joinedMidRound && p.ready).length} / {gameState.players.filter(p => !p.joinedMidRound).length} ready
                   </p>
                   {readyTimeRemaining !== null && (
                     <p className={cn(
