@@ -11,6 +11,10 @@ interface GlimpsePlayerProps {
   isController: boolean;
   onReport?: (state: { playing: boolean; positionSec: number }) => void;
   onReady?: () => void; // Called when video is loaded and ready to play
+  // Segment ladder support
+  timeStart?: number; // Start offset in seconds (default 0)
+  timeEnd?: number; // End limit in seconds (default = duration)
+  segmentDuration?: number; // Current segment duration (1s, 2s, 3s, 5s)
 }
 
 /**
@@ -27,6 +31,9 @@ export function GlimpsePlayer({
   isController,
   onReport,
   onReady,
+  timeStart = 0,
+  timeEnd,
+  segmentDuration,
 }: GlimpsePlayerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerRef = useRef<Player | null>(null);
@@ -35,6 +42,9 @@ export function GlimpsePlayer({
   const lastYoutubeIdRef = useRef<string>("");
   const readyReportedRef = useRef<boolean>(false);
   const [isInitializing, setIsInitializing] = useState(false);
+  
+  // Track if we've seeked to start for current video
+  const hasInitialSeekedRef = useRef<boolean>(false);
 
   // Initialize or recreate player when YouTube ID changes
   useEffect(() => {
@@ -54,6 +64,7 @@ export function GlimpsePlayer({
         playerRef.current = null;
       }
       readyReportedRef.current = false;
+      hasInitialSeekedRef.current = false; // Reset seek flag
     }
 
     lastYoutubeIdRef.current = youtubeId;
@@ -96,6 +107,17 @@ export function GlimpsePlayer({
           if (!readyReportedRef.current && onReady) {
             readyReportedRef.current = true;
             onReady();
+            
+            // Seek to timeStart when ready
+            if (!hasInitialSeekedRef.current && playerRef.current && timeStart > 0) {
+              try {
+                playerRef.current.currentTime(timeStart);
+                hasInitialSeekedRef.current = true;
+                console.log("[GlimpsePlayer] Seeked to start:", timeStart);
+              } catch (err) {
+                console.warn("[GlimpsePlayer] Error seeking to start:", err);
+              }
+            }
           }
         };
 
@@ -226,6 +248,32 @@ export function GlimpsePlayer({
       }
     };
   }, [isController, playing, positionSec]);
+
+  // Segment ladder: monitor playback and loop when reaching segment end
+  useEffect(() => {
+    if (!isController || !playerRef.current || !segmentDuration) return;
+
+    const monitorInterval = window.setInterval(() => {
+      if (!playerRef.current) return;
+
+      try {
+        const currentTime = playerRef.current.currentTime() || 0;
+        const segmentEnd = Math.min(timeStart + segmentDuration, timeEnd || Infinity);
+
+        // If we've passed the segment end, loop back to start
+        if (currentTime >= segmentEnd) {
+          playerRef.current.currentTime(timeStart);
+          console.log("[GlimpsePlayer] Looped segment:", timeStart, "→", segmentEnd);
+        }
+      } catch (err) {
+        console.debug("Segment monitor error:", err);
+      }
+    }, 100); // Check frequently for tight loop
+
+    return () => {
+      clearInterval(monitorInterval);
+    };
+  }, [isController, segmentDuration, timeStart, timeEnd]);
 
   return (
     <div data-vjs-player className="vjs-glimpse-player">

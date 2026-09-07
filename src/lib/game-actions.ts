@@ -22,8 +22,17 @@ import {
   resumeRoutine as resumeRoutineInMemory,
   stopRoutine as stopRoutineInMemory,
   skipPhase as skipPhaseInMemory,
+  addClipToLibrary as addClipToLibraryInMemory,
+  updateClipInLibrary as updateClipInLibraryInMemory,
+  removeClipFromLibrary as removeClipFromLibraryInMemory,
+  createPlaylist as createPlaylistInMemory,
+  updatePlaylist as updatePlaylistInMemory,
+  removePlaylist as removePlaylistInMemory,
+  advanceToNextSegment as advanceToNextSegmentInMemory,
+  castVote as castVoteInMemory,
   type RoutineConfig,
 } from "./game-state";
+import type { LibraryClip, Playlist } from "./library";
 
 export const createTable = createServerFn({ method: "POST" })
   .validator((data: { hostName?: string }) => data)
@@ -229,5 +238,113 @@ export const performHostAction = createServerFn({ method: "POST" })
       throw new Error("Action failed");
     }
 
+    return { success: true };
+  });
+
+// ============================================================================
+// LIBRARY MANAGEMENT
+// ============================================================================
+
+export const addClipToLibrary = createServerFn({ method: "POST" })
+  .validator((data: { tableId: string; clip: LibraryClip }) => data)
+  .handler(async ({ data }) => {
+    const { tableId, clip } = data;
+    const normalizedTableId = tableId.toUpperCase();
+    const success = addClipToLibraryInMemory(normalizedTableId, clip);
+    if (!success) {
+      throw new Error("Failed to add clip");
+    }
+    return { success: true };
+  });
+
+export const updateClipInLibrary = createServerFn({ method: "POST" })
+  .validator((data: { tableId: string; clipId: string; updates: Partial<LibraryClip> }) => data)
+  .handler(async ({ data }) => {
+    const { tableId, clipId, updates } = data;
+    const normalizedTableId = tableId.toUpperCase();
+    const success = updateClipInLibraryInMemory(normalizedTableId, clipId, updates);
+    if (!success) {
+      throw new Error("Failed to update clip");
+    }
+    return { success: true };
+  });
+
+export const removeClipFromLibrary = createServerFn({ method: "POST" })
+  .validator((data: { tableId: string; clipId: string }) => data)
+  .handler(async ({ data }) => {
+    const { tableId, clipId } = data;
+    const normalizedTableId = tableId.toUpperCase();
+    const success = removeClipFromLibraryInMemory(normalizedTableId, clipId);
+    if (!success) {
+      throw new Error("Failed to remove clip");
+    }
+    return { success: true };
+  });
+
+export const createPlaylist = createServerFn({ method: "POST" })
+  .validator((data: { tableId: string; name: string; clipIds?: string[] }) => data)
+  .handler(async ({ data }) => {
+    const { tableId, name, clipIds } = data;
+    const normalizedTableId = tableId.toUpperCase();
+    const playlistId = createPlaylistInMemory(normalizedTableId, name, clipIds);
+    if (!playlistId) {
+      throw new Error("Failed to create playlist");
+    }
+    return { playlistId };
+  });
+
+export const updatePlaylist = createServerFn({ method: "POST" })
+  .validator((data: { tableId: string; playlistId: string; updates: Partial<Omit<Playlist, "id" | "createdAt">> }) => data)
+  .handler(async ({ data }) => {
+    const { tableId, playlistId, updates } = data;
+    const normalizedTableId = tableId.toUpperCase();
+    const success = updatePlaylistInMemory(normalizedTableId, playlistId, updates);
+    if (!success) {
+      throw new Error("Failed to update playlist");
+    }
+    return { success: true };
+  });
+
+export const removePlaylist = createServerFn({ method: "POST" })
+  .validator((data: { tableId: string; playlistId: string }) => data)
+  .handler(async ({ data }) => {
+    const { tableId, playlistId } = data;
+    const normalizedTableId = tableId.toUpperCase();
+    const success = removePlaylistInMemory(normalizedTableId, playlistId);
+    if (!success) {
+      throw new Error("Failed to remove playlist");
+    }
+    return { success: true };
+  });
+
+// ============================================================================
+// SEGMENT LADDER
+// ============================================================================
+
+export const advanceSegment = createServerFn({ method: "POST" })
+  .validator((data: { tableId: string }) => data)
+  .handler(async ({ data }) => {
+    const { tableId } = data;
+    const normalizedTableId = tableId.toUpperCase();
+    const success = advanceToNextSegmentInMemory(normalizedTableId);
+    if (!success) {
+      throw new Error("Cannot advance segment");
+    }
+    return { success: true };
+  });
+
+// ============================================================================
+// VOTING
+// ============================================================================
+
+export const castVote = createServerFn({ method: "POST" })
+  .validator((data: { tableId: string; playerId: string; voteType: "advance" | "hint" }) => data)
+  .handler(async ({ data }) => {
+    const { tableId, playerId, voteType } = data;
+    const normalizedTableId = tableId.toUpperCase();
+    const success = castVoteInMemory(normalizedTableId, playerId, voteType);
+    if (!success) {
+      throw new Error("Failed to cast vote");
+    }
     return { success: true };
   });

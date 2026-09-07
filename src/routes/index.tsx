@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PuzzleBoard } from "@/components/PuzzleBoard";
 import { GlimpsePlayer } from "@/components/GlimpsePlayer";
-import { GLIMPSE_CLIPS, layoutPhrase, type Cell } from "@/lib/puzzle";
+import { layoutPhrase, type Cell } from "@/lib/puzzle";
 import type { GameState } from "@/lib/game-state";
 import { PHASE_DURATIONS } from "@/lib/game-state";
 import {
@@ -13,8 +13,12 @@ import {
   sendChatMessage as sendChatMessageAction,
   reportReady as reportReadyAction,
   performHostAction,
+  advanceSegment as advanceSegmentAction,
+  castVote as castVoteAction,
+  addClipToLibrary as addClipToLibraryAction,
 } from "@/lib/game-actions";
 import { getMatchHint } from "@/lib/match-helper";
+import { createYouTubeLibraryClip } from "@/lib/library";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -75,9 +79,21 @@ function Index() {
 
   const currentPlayer = gameState?.players.find((p) => p.id === playerId);
   const isHost = currentPlayer?.isHost ?? false;
+  
+  // Find current clip from library
   const currentClip = gameState?.currentClipId
-    ? GLIMPSE_CLIPS.find((c) => c.id === gameState.currentClipId)
+    ? gameState.library.clips.find((c) => c.id === gameState.currentClipId)
     : null;
+    
+  // Get YouTube metadata if available
+  const youtubeMetadata = currentClip?.metadata && "youtubeId" in currentClip.metadata 
+    ? currentClip.metadata 
+    : null;
+    
+  // Get current segment duration
+  const currentSegmentDuration = gameState?.segmentLadder
+    ? gameState.segmentLadder.segmentDurations[gameState.segmentLadder.currentSegmentIndex]
+    : undefined;
 
   // Calculate time remaining in current phase
   useEffect(() => {
@@ -247,6 +263,14 @@ function Index() {
   const [revealDuration, setRevealDuration] = useState(8);
   const [autoAdvance, setAutoAdvance] = useState(true);
   const [showOverrides, setShowOverrides] = useState(false);
+  
+  // Glimpse Management state
+  const [showManagement, setShowManagement] = useState(false);
+  const [newClipYoutubeId, setNewClipYoutubeId] = useState("");
+  const [newClipTitle, setNewClipTitle] = useState("");
+  const [newClipCategory, setNewClipCategory] = useState("");
+  const [newClipTimeStart, setNewClipTimeStart] = useState("0");
+  const [newClipTimeEnd, setNewClipTimeEnd] = useState("60");
 
   const hostAction = async (action: string, payload: Record<string, unknown> = {}) => {
     if (!tableId || !isHost || !playerId) return;
@@ -291,6 +315,55 @@ function Index() {
     setSelectedPlaylist((prev) =>
       prev.includes(clipId) ? prev.filter((id) => id !== clipId) : [...prev, clipId]
     );
+  };
+  
+  // Glimpse Management: Add YouTube clip
+  const addYouTubeClip = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tableId || !newClipYoutubeId.trim() || !newClipTitle.trim()) return;
+
+    try {
+      const clip = createYouTubeLibraryClip(
+        newClipTitle.trim(),
+        newClipYoutubeId.trim(),
+        newClipCategory.trim() || "Uncategorized",
+        "Movie", // Default type
+        parseInt(newClipTimeEnd) || 60,
+        parseInt(newClipTimeStart) || 0,
+        parseInt(newClipTimeEnd) || 60
+      );
+
+      await addClipToLibraryAction({ data: { tableId, clip } });
+
+      // Reset form
+      setNewClipYoutubeId("");
+      setNewClipTitle("");
+      setNewClipCategory("");
+      setNewClipTimeStart("0");
+      setNewClipTimeEnd("60");
+    } catch (error) {
+      console.error("Failed to add clip:", error);
+    }
+  };
+  
+  // Segment advance (host override)
+  const advanceSegment = async () => {
+    if (!tableId) return;
+    try {
+      await advanceSegmentAction({ data: { tableId } });
+    } catch (error) {
+      console.error("Failed to advance segment:", error);
+    }
+  };
+  
+  // Player voting
+  const vote = async (voteType: "advance" | "hint") => {
+    if (!tableId || !playerId) return;
+    try {
+      await castVoteAction({ data: { tableId, playerId, voteType } });
+    } catch (error) {
+      console.error("Failed to vote:", error);
+    }
   };
 
   // Report when video is ready to play
@@ -508,15 +581,18 @@ function Index() {
               </div>
             )}
 
-            {gameState?.currentClipId && currentClip?.youtubeId && gameState.phase !== "reveal" && (
+            {gameState?.currentClipId && youtubeMetadata && gameState.phase !== "reveal" && (
               <div className="board-frame aspect-video">
                 <GlimpsePlayer
-                  youtubeId={currentClip.youtubeId}
+                  youtubeId={youtubeMetadata.youtubeId}
                   playing={gameState.clipPlaying}
                   positionSec={gameState.clipPosition}
                   isController={isHost}
                   onReport={isHost ? reportClipState : undefined}
                   onReady={reportReady}
+                  timeStart={youtubeMetadata.timeStart}
+                  timeEnd={youtubeMetadata.timeEnd}
+                  segmentDuration={currentSegmentDuration}
                 />
               </div>
             )}
@@ -553,7 +629,30 @@ function Index() {
             )}
 
             {gameState?.phase === "playing" && (
-              <form onSubmit={(e) => submitGuess(e, false)} className="flex gap-2">
+              <div className="space-y-3">
+                {/* Player voting buttons */}
+                {!currentPlayer?.joinedMidRound && gameState.segmentLadder && gameState.voteState && (
+                  <div className="flex gap-2 justify-center">
+                    <Button
+                      onClick={() => vote("advance")}
+                      disabled={gameState.voteState.advanceVotes.includes(playerId!)}
+                      className="rounded-full border border-gold/30 bg-gold/10 hover:bg-gold/20 px-4 py-2 font-display text-sm uppercase"
+                    >
+                      {gameState.voteState.advanceVotes.includes(playerId!) ? "✓ " : ""}
+                      Next Segment ({gameState.voteState.advanceVotes.length}/{gameState.voteState.threshold})
+                    </Button>
+                    <Button
+                      onClick={() => vote("hint")}
+                      disabled={gameState.voteState.hintVotes.includes(playerId!)}
+                      className="rounded-full border border-white/30 bg-white/10 hover:bg-white/20 px-4 py-2 font-display text-sm uppercase"
+                    >
+                      {gameState.voteState.hintVotes.includes(playerId!) ? "✓ " : ""}
+                      Hint ({gameState.voteState.hintVotes.length}/{gameState.voteState.threshold})
+                    </Button>
+                  </div>
+                )}
+                
+                <form onSubmit={(e) => submitGuess(e, false)} className="flex gap-2">
                 <Input
                   value={guessInput}
                   onChange={(e) => setGuessInput(e.target.value)}
@@ -589,6 +688,7 @@ function Index() {
                   </>
                 )}
               </form>
+              </div>
             )}
 
             {gameState?.phase === "judging" && gameState.guesses.length > 0 && currentClip && (
@@ -596,22 +696,59 @@ function Index() {
                 <h3 className="font-display text-xl text-gold uppercase tracking-wider">
                   Guesses {isHost && "— Judge & Award Points"}
                 </h3>
+                {isHost && gameState.routine?.status === "running" && (
+                  <div className="rounded-lg border border-gold/30 bg-gold/5 p-2 text-xs text-white/70">
+                    <span className="text-gold font-semibold">⏱ Quick Score:</span> Award points to correct answers before time runs out
+                  </div>
+                )}
                 <div className="space-y-1 max-h-60 overflow-y-auto">
                   {gameState.guesses.map((g) => {
                     const hint = getMatchHint(g.text, currentClip.title);
+                    const hintStyle = hint.startsWith("✓") 
+                      ? "bg-green-500/20 text-green-300 border-green-500/40" 
+                      : hint.startsWith("~") 
+                      ? "bg-yellow-500/20 text-yellow-300 border-yellow-500/40"
+                      : hint.startsWith("≈")
+                      ? "bg-blue-500/20 text-blue-300 border-blue-500/40"
+                      : "bg-white/10 text-white/60 border-white/20";
+                    const player = gameState.players.find((p) => p.id === g.playerId);
                     return (
                       <div
                         key={g.id}
-                        className="flex items-center justify-between rounded-lg border border-white/5 bg-white/5 px-3 py-2"
+                        className={cn(
+                          "flex items-center justify-between rounded-lg border px-3 py-2 gap-2",
+                          hint.startsWith("✓") ? "border-green-500/30 bg-green-500/5" : "border-white/5 bg-white/5"
+                        )}
                       >
                         <span className="text-sm flex-1">
                           <span className="font-semibold text-gold">{g.playerName}:</span>{" "}
                           {g.text}
                         </span>
                         {hint && (
-                          <span className="text-xs font-mono text-gold/80 ml-2">
+                          <span className={cn(
+                            "text-sm font-display px-3 py-1 rounded-full border uppercase tracking-wider whitespace-nowrap",
+                            hintStyle
+                          )}>
                             {hint}
                           </span>
+                        )}
+                        {isHost && player && (
+                          <div className="flex gap-1 shrink-0">
+                            <button
+                              onClick={() => updateScore(player.id, player.score + 100)}
+                              className="rounded bg-gold/20 px-2 py-1 text-xs text-gold hover:bg-gold/30 font-display"
+                              title="Award 100 points"
+                            >
+                              +100
+                            </button>
+                            <button
+                              onClick={() => updateScore(player.id, player.score + 50)}
+                              className="rounded bg-gold/15 px-2 py-1 text-xs text-gold/80 hover:bg-gold/25 font-display"
+                              title="Award 50 points"
+                            >
+                              +50
+                            </button>
+                          </div>
                         )}
                       </div>
                     );
@@ -666,18 +803,97 @@ function Index() {
                         {gameState.players.filter(p => !p.joinedMidRound && p.lockedIn).length} / {gameState.players.filter(p => !p.joinedMidRound).length}
                       </span>
                     </div>
+                    {gameState.segmentLadder && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-white/60">Segment</span>
+                        <span className="font-display text-gold">
+                          {gameState.segmentLadder.segmentDurations[gameState.segmentLadder.currentSegmentIndex]}s
+                          {gameState.segmentLadder.currentSegmentIndex < gameState.segmentLadder.segmentDurations.length - 1 && (
+                            <Button
+                              onClick={advanceSegment}
+                              className="ml-2 px-2 py-1 h-6 text-xs rounded-full bg-gold/20 hover:bg-gold/30"
+                              size="sm"
+                            >
+                              → {gameState.segmentLadder.segmentDurations[gameState.segmentLadder.currentSegmentIndex + 1]}s
+                            </Button>
+                          )}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 )}
 
                 {/* Configure (when idle) */}
                 {(!gameState?.routine || gameState.routine.status === "idle") && (
                   <div className="space-y-3">
+                    {/* Glimpse Management toggle */}
+                    <button
+                      onClick={() => setShowManagement(!showManagement)}
+                      className="w-full rounded-lg border border-gold/30 bg-gold/10 px-3 py-2 text-sm text-gold hover:bg-gold/15 font-display uppercase tracking-wider"
+                    >
+                      {showManagement ? "▼" : "▶"} Glimpse Management
+                    </button>
+
+                    {showManagement && (
+                      <div className="space-y-3 rounded-lg border border-gold/20 bg-black/20 p-3">
+                        <h4 className="text-sm font-display uppercase tracking-wider text-gold">Add YouTube Clip</h4>
+                        <form onSubmit={addYouTubeClip} className="space-y-2">
+                          <Input
+                            value={newClipTitle}
+                            onChange={(e) => setNewClipTitle(e.target.value)}
+                            placeholder="Title (e.g., THE MATRIX)"
+                            className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
+                          />
+                          <Input
+                            value={newClipYoutubeId}
+                            onChange={(e) => setNewClipYoutubeId(e.target.value)}
+                            placeholder="YouTube ID (e.g., m8e-FF8MsqU)"
+                            className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
+                          />
+                          <Input
+                            value={newClipCategory}
+                            onChange={(e) => setNewClipCategory(e.target.value)}
+                            placeholder="Category (e.g., Sci-Fi Action)"
+                            className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
+                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-xs text-white/50">Start (s)</label>
+                              <Input
+                                type="number"
+                                value={newClipTimeStart}
+                                onChange={(e) => setNewClipTimeStart(e.target.value)}
+                                placeholder="0"
+                                className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-white/50">End (s)</label>
+                              <Input
+                                type="number"
+                                value={newClipTimeEnd}
+                                onChange={(e) => setNewClipTimeEnd(e.target.value)}
+                                placeholder="60"
+                                className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
+                              />
+                            </div>
+                          </div>
+                          <Button
+                            type="submit"
+                            className="w-full rounded-full bg-gold/20 hover:bg-gold/30 text-gold font-display text-sm"
+                          >
+                            Add Clip
+                          </Button>
+                        </form>
+                      </div>
+                    )}
+
                     <div className="space-y-2">
                       <label className="text-sm text-white/60 uppercase tracking-wider">
                         Playlist ({selectedPlaylist.length} clips)
                       </label>
                       <div className="grid gap-2 sm:grid-cols-2 max-h-60 overflow-y-auto">
-                        {GLIMPSE_CLIPS.map((clip) => (
+                        {gameState.library.clips.map((clip) => (
                           <button
                             key={clip.id}
                             onClick={() => toggleClipInPlaylist(clip.id)}
