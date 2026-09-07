@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PuzzleBoard } from "@/components/PuzzleBoard";
+import { GlimpsePlayer } from "@/components/GlimpsePlayer";
 import { GLIMPSE_CLIPS, layoutPhrase, type Cell } from "@/lib/puzzle";
 import type { GameState } from "@/lib/game-state";
 import {
@@ -225,6 +226,31 @@ function Index() {
     }
   };
 
+  // Host reports clip position/state (for Video.js sync)
+  // Throttled to avoid excessive API calls - only update if state changed significantly
+  const lastReportRef = useRef({ playing: false, positionSec: 0, timestamp: 0 });
+  const reportClipState = useCallback(
+    (state: { playing: boolean; positionSec: number }) => {
+      if (!isHost || !tableId || !playerId) return;
+      
+      const last = lastReportRef.current;
+      const now = Date.now();
+      
+      // Only report if:
+      // 1. Play/pause state changed, OR
+      // 2. Position changed by more than 0.5 seconds AND at least 500ms since last report
+      const playStateChanged = state.playing !== last.playing;
+      const positionDrift = Math.abs(state.positionSec - last.positionSec);
+      const shouldReport = playStateChanged || (positionDrift > 0.5 && now - last.timestamp > 500);
+      
+      if (shouldReport) {
+        lastReportRef.current = { ...state, timestamp: now };
+        hostAction("set_clip_state", { playing: state.playing, position: state.positionSec });
+      }
+    },
+    [isHost, tableId, playerId]
+  );
+
   const copyJoinLink = () => {
     const url = `${window.location.origin}/?table=${tableId}`;
     navigator.clipboard.writeText(url).then(() => {
@@ -379,19 +405,13 @@ function Index() {
 
             {gameState?.currentClipId && currentClip?.youtubeId && gameState.phase !== "reveal" && (
               <div className="board-frame aspect-video">
-                <iframe
-                  key={currentClip.youtubeId}
-                  src={`https://www.youtube.com/embed/${currentClip.youtubeId}?autoplay=0&enablejsapi=1`}
-                  className="h-full w-full rounded"
-                  allow="autoplay; encrypted-media"
-                  allowFullScreen
-                  title="Glimpse Clip"
+                <GlimpsePlayer
+                  youtubeId={currentClip.youtubeId}
+                  playing={gameState.clipPlaying}
+                  positionSec={gameState.clipPosition}
+                  isController={isHost}
+                  onReport={isHost ? reportClipState : undefined}
                 />
-                {!gameState.clipPlaying && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white text-sm">
-                    Click video to play (autoplay may be blocked by browser)
-                  </div>
-                )}
               </div>
             )}
 

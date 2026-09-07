@@ -1,6 +1,7 @@
 import { createFileRoute, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PuzzleBoard } from "@/components/PuzzleBoard";
+import { GlimpsePlayer } from "@/components/GlimpsePlayer";
 import { GLIMPSE_CLIPS, layoutPhrase, type Cell } from "@/lib/puzzle";
 import type { GameState } from "@/lib/game-state";
 import { fetchGameState as fetchGameStateAction } from "@/lib/game-actions";
@@ -132,13 +133,11 @@ function StageView() {
               currentClip?.youtubeId &&
               gameState.phase !== "reveal" && (
                 <div className="board-frame aspect-video relative">
-                  <iframe
-                    key={currentClip.youtubeId}
-                    src={`https://www.youtube.com/embed/${currentClip.youtubeId}?autoplay=0&enablejsapi=1`}
-                    className="h-full w-full rounded"
-                    allow="autoplay; encrypted-media"
-                    allowFullScreen
-                    title="Glimpse Clip"
+                  <GlimpsePlayer
+                    youtubeId={currentClip.youtubeId}
+                    playing={gameState.clipPlaying}
+                    positionSec={gameState.clipPosition}
+                    isController={false}
                   />
                 </div>
               )}
