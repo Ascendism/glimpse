@@ -15,6 +15,7 @@ import {
   resumeSession as resumeSessionInMemory,
   restartSession as restartSessionInMemory,
   reportPlayerReady as reportPlayerReadyInMemory,
+  forceStartAnyway as forceStartAnywayInMemory,
   configureRoutine as configureRoutineInMemory,
   startRoutine as startRoutineInMemory,
   pauseRoutine as pauseRoutineInMemory,
@@ -193,6 +194,9 @@ export const performHostAction = createServerFn({ method: "POST" })
         break;
       case "restart_session":
         success = restartSessionInMemory(normalizedTableId);
+        break;
+      case "force_start_anyway":
+        success = forceStartAnywayInMemory(normalizedTableId);
         break;
       case "configure_routine":
         success = configureRoutineInMemory(normalizedTableId, payload?.config as RoutineConfig);

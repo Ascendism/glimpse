@@ -64,7 +64,11 @@ export type GameState = {
   sessionPaused: boolean;
   routine: RoutineRuntime | null;
   waitingForReady: boolean; // True when waiting for all clients to report ready
+  readyDeadline: number | null; // Epoch milliseconds when ready wait expires
 };
+
+// Configuration constants
+const READY_TIMEOUT_SEC = 15; // Default timeout for ready handshake
 
 // In-memory game state (replace with a database in production)
 // Hang on globalThis to survive HMR in dev
@@ -94,6 +98,7 @@ export function createTable(): string {
     sessionPaused: false,
     routine: null,
     waitingForReady: false,
+    readyDeadline: null,
   });
   return tableId;
 }
@@ -239,6 +244,7 @@ export function startRound(tableId: string, clipId: string): boolean {
   table.revealedTitle = false;
   table.sessionPaused = false;
   table.waitingForReady = true; // Wait for ready handshake
+  table.readyDeadline = Date.now() + READY_TIMEOUT_SEC * 1000; // Set timeout
   
   // Reset all players' locked-in and ready state
   table.players.forEach((p) => {
@@ -305,6 +311,7 @@ export function resetRound(tableId: string): boolean {
   table.revealedTitle = false;
   table.sessionPaused = false;
   table.waitingForReady = false;
+  table.readyDeadline = null;
   
   // Reset all players' locked-in and ready state
   table.players.forEach((p) => {
@@ -349,6 +356,7 @@ export function restartSession(tableId: string): boolean {
   table.revealedTitle = false;
   table.sessionPaused = false;
   table.waitingForReady = false;
+  table.readyDeadline = null;
   
   // Reset all players' locked-in and ready state but keep scores
   table.players.forEach((p) => {
@@ -380,6 +388,7 @@ export function reportPlayerReady(
   if (table.waitingForReady && table.players.every((p) => p.ready)) {
     // All players ready - start playback!
     table.waitingForReady = false;
+    table.readyDeadline = null; // Clear timeout
     table.clipPlaying = true;
 
     // If running a routine, set the phase deadline now
@@ -391,6 +400,33 @@ export function reportPlayerReady(
     addSystemMessage(tableId, "All players ready — clip playing!");
   }
 
+  return true;
+}
+
+export function forceStartAnyway(tableId: string): boolean {
+  const table = getTable(tableId);
+  if (!table) return false;
+  
+  // Only works if actually waiting for ready
+  if (!table.waitingForReady) return false;
+  
+  // Force start even if not all players ready
+  table.waitingForReady = false;
+  table.readyDeadline = null;
+  table.clipPlaying = true;
+  
+  // If running a routine, set the phase deadline now
+  if (table.routine && table.routine.status === "running") {
+    table.routine.phaseDeadline =
+      Date.now() + table.routine.config.guessDurationSec * 1000;
+  }
+  
+  const readyCount = table.players.filter((p) => p.ready).length;
+  addSystemMessage(
+    tableId,
+    `Host started anyway (${readyCount}/${table.players.length} ready)`
+  );
+  
   return true;
 }
 
@@ -453,6 +489,7 @@ export function startRoutine(tableId: string): boolean {
   table.revealedTitle = false;
   table.sessionPaused = false;
   table.waitingForReady = true; // Wait for ready handshake
+  table.readyDeadline = Date.now() + READY_TIMEOUT_SEC * 1000; // Set timeout
   table.players.forEach((p) => {
     p.lockedIn = false;
     p.ready = false;
@@ -532,6 +569,7 @@ export function stopRoutine(tableId: string): boolean {
   table.clipPlaying = false;
   table.sessionPaused = false;
   table.waitingForReady = false;
+  table.readyDeadline = null;
   table.players.forEach((p) => {
     p.lockedIn = false;
     p.ready = false;
@@ -626,6 +664,7 @@ function advanceRoutinePhase(table: GameState): void {
         table.clipPosition = 0;
         table.revealedTitle = false;
         table.waitingForReady = true;
+        table.readyDeadline = Date.now() + READY_TIMEOUT_SEC * 1000; // Set timeout
         table.players.forEach((p) => {
           p.lockedIn = false;
           p.ready = false;

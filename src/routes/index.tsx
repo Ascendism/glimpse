@@ -68,6 +68,7 @@ function Index() {
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
   const [delays, setDelays] = useState<Record<string, number>>({});
   const [copySuccess, setCopySuccess] = useState(false);
+  const [readyTimeRemaining, setReadyTimeRemaining] = useState<number | null>(null);
   const pollInterval = useRef<number | null>(null);
 
   const currentPlayer = gameState?.players.find((p) => p.id === playerId);
@@ -119,6 +120,23 @@ function Index() {
       };
     }
   }, [tableId, fetchGameState]);
+
+  // Calculate ready timeout countdown
+  useEffect(() => {
+    if (!gameState?.waitingForReady || !gameState.readyDeadline) {
+      setReadyTimeRemaining(null);
+      return;
+    }
+
+    const updateCountdown = () => {
+      const remaining = Math.max(0, gameState.readyDeadline! - Date.now());
+      setReadyTimeRemaining(Math.ceil(remaining / 1000));
+    };
+
+    updateCountdown();
+    const interval = window.setInterval(updateCountdown, 100);
+    return () => clearInterval(interval);
+  }, [gameState?.waitingForReady, gameState?.readyDeadline]);
 
   const createTable = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -213,6 +231,8 @@ function Index() {
       console.error("Failed to perform host action:", error);
     }
   };
+
+  const forceStartAnyway = () => hostAction("force_start_anyway");
 
   const configureRoutine = () => {
     if (selectedPlaylist.length === 0) return;
@@ -449,13 +469,33 @@ function Index() {
             )}
             
             {gameState?.waitingForReady && (
-              <div className="text-center rounded-lg border border-gold/30 bg-gold/10 px-4 py-3">
-                <p className="text-gold font-display text-lg tracking-wider uppercase">
-                  Waiting for all players to load video...
-                </p>
-                <p className="text-sm text-white/60 mt-1">
-                  {gameState.players.filter(p => p.ready).length} / {gameState.players.length} ready
-                </p>
+              <div className="rounded-lg border border-gold/30 bg-gold/10 px-4 py-3 space-y-2">
+                <div className="text-center">
+                  <p className="text-gold font-display text-lg tracking-wider uppercase">
+                    Waiting for all players to load video...
+                  </p>
+                  <p className="text-sm text-white/60 mt-1">
+                    {gameState.players.filter(p => p.ready).length} / {gameState.players.length} ready
+                  </p>
+                  {readyTimeRemaining !== null && (
+                    <p className={cn(
+                      "text-xs mt-1 font-mono",
+                      readyTimeRemaining <= 5 ? "text-red-400 font-semibold animate-pulse" : "text-white/50"
+                    )}>
+                      {readyTimeRemaining > 0 ? `${readyTimeRemaining}s remaining` : "Timed out"}
+                    </p>
+                  )}
+                </div>
+                {isHost && readyTimeRemaining !== null && readyTimeRemaining <= 10 && (
+                  <div className="flex justify-center">
+                    <Button
+                      onClick={forceStartAnyway}
+                      className="rounded-full bg-gold/90 hover:bg-gold px-6 py-2 font-display text-sm uppercase tracking-wider"
+                    >
+                      Start Anyway
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -784,9 +824,15 @@ function Index() {
                           "text-xs rounded-full border px-2 py-0.5 uppercase tracking-wider",
                           p.ready
                             ? "border-green-500/40 bg-green-500/20 text-green-300"
-                            : "border-white/20 bg-white/5 text-white/40"
+                            : readyTimeRemaining !== null && readyTimeRemaining === 0
+                              ? "border-red-500/40 bg-red-500/20 text-red-300"
+                              : "border-white/20 bg-white/5 text-white/40"
                         )}>
-                          {p.ready ? "Ready" : "Loading..."}
+                          {p.ready 
+                            ? "Ready" 
+                            : readyTimeRemaining !== null && readyTimeRemaining === 0
+                              ? "Timed out"
+                              : "Loading..."}
                         </span>
                       )}
                       {p.lockedIn && !gameState.waitingForReady && (
