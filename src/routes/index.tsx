@@ -80,6 +80,7 @@ function Index() {
   const [copySuccess, setCopySuccess] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
   const [readyTimeRemaining, setReadyTimeRemaining] = useState<number | null>(null);
+  const [hintMessage, setHintMessage] = useState<string | null>(null);
   const pollInterval = useRef<number | null>(null);
 
   const currentPlayer = gameState?.players.find((p) => p.id === playerId);
@@ -544,7 +545,17 @@ function Index() {
   };
   
   // Manual hint reveal (host override)
-  const giveHint = () => hostAction("reveal_hint");
+  const giveHint = async () => {
+    if (!tableId || !isHost || !playerId) return;
+    try {
+      await performHostAction({ data: { tableId, action: "reveal_hint", playerId } });
+      setHintMessage(null);
+    } catch (error) {
+      console.error("Failed to give hint:", error);
+      setHintMessage("All letters already revealed!");
+      setTimeout(() => setHintMessage(null), 3000);
+    }
+  };
   
   // Player voting
   const vote = async (voteType: "advance" | "hint") => {
@@ -1025,7 +1036,7 @@ function Index() {
                         {gameState.voteState.hintVotes.length >= gameState.voteState.threshold && " ✓"}
                       </span>
                     </div>
-                    <div className="pt-1">
+                    <div className="pt-1 space-y-1">
                       <Button
                         onClick={giveHint}
                         className="w-full px-2 py-1 h-7 text-xs rounded-full bg-white/10 hover:bg-white/20"
@@ -1033,6 +1044,11 @@ function Index() {
                       >
                         Give Hint
                       </Button>
+                      {hintMessage && (
+                        <p className="text-xs text-yellow-400 text-center animate-pulse">
+                          {hintMessage}
+                        </p>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1167,6 +1183,11 @@ function Index() {
                               <h5 className="text-xs font-display uppercase tracking-wider text-gold/80 mb-2">
                                 Or Upload Local File
                               </h5>
+                              <div className="mb-2 rounded border border-yellow-500/30 bg-yellow-500/10 px-2 py-1.5">
+                                <p className="text-xs text-yellow-300/90">
+                                  ⚠️ Uploads use browser memory — won't persist across tabs or reloads. For production, use YouTube or hosted URLs.
+                                </p>
+                              </div>
                               <form onSubmit={addUploadClip} className="space-y-2">
                                 <Input
                                   type="file"
@@ -1223,7 +1244,13 @@ function Index() {
                                 Library ({gameState.library.clips.length} clips)
                               </h5>
                               <div className="space-y-1 max-h-40 overflow-y-auto">
-                                {gameState.library.clips.map((clip) => (
+                                {gameState.library.clips.length === 0 ? (
+                                  <div className="rounded border border-white/10 bg-white/5 px-3 py-6 text-center">
+                                    <p className="text-xs text-white/40 mb-1">No clips in library yet</p>
+                                    <p className="text-xs text-white/30">Add a YouTube URL or upload a video above</p>
+                                  </div>
+                                ) : (
+                                  gameState.library.clips.map((clip) => (
                                   <div
                                     key={clip.id}
                                     className="flex items-center justify-between rounded border border-white/10 bg-white/5 px-2 py-1.5 text-xs"
@@ -1247,7 +1274,8 @@ function Index() {
                                       </button>
                                     </div>
                                   </div>
-                                ))}
+                                  ))
+                                )}
                               </div>
                             </div>
                           </>

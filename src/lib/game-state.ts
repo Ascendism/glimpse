@@ -150,7 +150,6 @@ declare global {
 const tables = globalThis.__glimpseTables ?? loadTablesFromDisk();
 if (!globalThis.__glimpseTables) {
   globalThis.__glimpseTables = tables;
-  console.log(`[Glimpse] Initialized with ${tables.size} table(s) from disk`);
 }
 
 export function createTable(): string {
@@ -909,7 +908,6 @@ export function tickOrchestration(): void {
 // Start global orchestration tick (HMR-safe)
 if (typeof globalThis !== "undefined" && !globalThis.__glimpseOrchestrationInterval) {
   globalThis.__glimpseOrchestrationInterval = setInterval(tickOrchestration, 250);
-  console.log("[Glimpse] Orchestration tick started");
 }
 
 // ============================================================================
