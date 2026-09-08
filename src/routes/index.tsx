@@ -819,18 +819,34 @@ function Index() {
                     <Button
                       onClick={() => vote("advance")}
                       disabled={gameState.voteState.advanceVotes.includes(playerId!)}
-                      className="rounded-full border border-gold/30 bg-gold/10 hover:bg-gold/20 px-4 py-2 font-display text-sm uppercase"
+                      className={cn(
+                        "rounded-full border px-4 py-2 font-display text-sm uppercase transition-all",
+                        gameState.voteState.advanceVotes.includes(playerId!)
+                          ? "border-gold/50 bg-gold/20 text-gold"
+                          : "border-gold/30 bg-gold/10 hover:bg-gold/20"
+                      )}
                     >
                       {gameState.voteState.advanceVotes.includes(playerId!) ? "✓ " : ""}
                       Next Segment ({gameState.voteState.advanceVotes.length}/{gameState.voteState.threshold})
+                      {gameState.voteState.advanceVotes.length >= gameState.voteState.threshold && (
+                        <span className="ml-1 text-xs font-bold animate-pulse">PASSED!</span>
+                      )}
                     </Button>
                     <Button
                       onClick={() => vote("hint")}
                       disabled={gameState.voteState.hintVotes.includes(playerId!)}
-                      className="rounded-full border border-white/30 bg-white/10 hover:bg-white/20 px-4 py-2 font-display text-sm uppercase"
+                      className={cn(
+                        "rounded-full border px-4 py-2 font-display text-sm uppercase transition-all",
+                        gameState.voteState.hintVotes.includes(playerId!)
+                          ? "border-white/50 bg-white/20 text-white"
+                          : "border-white/30 bg-white/10 hover:bg-white/20"
+                      )}
                     >
                       {gameState.voteState.hintVotes.includes(playerId!) ? "✓ " : ""}
                       Hint ({gameState.voteState.hintVotes.length}/{gameState.voteState.threshold})
+                      {gameState.voteState.hintVotes.length >= gameState.voteState.threshold && (
+                        <span className="ml-1 text-xs font-bold animate-pulse">PASSED!</span>
+                      )}
                     </Button>
                   </div>
                 )}
@@ -1001,6 +1017,34 @@ function Index() {
                             </Button>
                           )}
                         </span>
+                      </div>
+                    )}
+                    {gameState.voteState && gameState.phase === "playing" && (
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-white/60">Advance Votes</span>
+                          <span className={cn(
+                            "font-display text-xs",
+                            gameState.voteState.advanceVotes.length >= gameState.voteState.threshold 
+                              ? "text-gold font-bold" 
+                              : "text-white/70"
+                          )}>
+                            {gameState.voteState.advanceVotes.length}/{gameState.voteState.threshold}
+                            {gameState.voteState.advanceVotes.length >= gameState.voteState.threshold && " ✓"}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-white/60">Hint Votes</span>
+                          <span className={cn(
+                            "font-display text-xs",
+                            gameState.voteState.hintVotes.length >= gameState.voteState.threshold 
+                              ? "text-white font-bold" 
+                              : "text-white/70"
+                          )}>
+                            {gameState.voteState.hintVotes.length}/{gameState.voteState.threshold}
+                            {gameState.voteState.hintVotes.length >= gameState.voteState.threshold && " ✓"}
+                          </span>
+                        </div>
                       </div>
                     )}
                   </div>
