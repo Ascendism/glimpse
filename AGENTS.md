@@ -40,6 +40,30 @@ bun run dev
 
 Visit `http://localhost:3000` → Create Table → Share code → Play!
 
+## Discord OAuth + Leaderboard
+
+### Authentication
+- Discord OAuth2 login for player identity tracking
+- Session-based authentication (7-day cookie expiry)
+- Guest mode: players can still play without Discord login
+
+### Database
+- SQLite for local dev (`/tmp/glimpse-dev-state/glimpse.db`)
+- Postgres-ready schema: `users`, `sessions`, `leaderboard_entries`
+- `src/lib/db.ts` - Database layer with migration-free schema init
+- `src/lib/discord-oauth.ts` - OAuth flow + session management
+
+### Leaderboard
+- Global stats: total points, games played, wins, avg points
+- `/leaderboard` route - top 100 players with rankings
+- Discord-linked players only (guests excluded from leaderboard)
+- `src/lib/leaderboard-actions.ts` - Stats aggregation
+
+### Setup
+- Requires Discord app credentials (see `DISCORD_SETUP.md`)
+- Environment variables: `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_REDIRECT_URI`, `SESSION_SECRET`
+- `.env.example` provided
+
 ## Extending
 
 - **Add clips**: Edit `GLIMPSE_CLIPS` in `src/lib/puzzle.ts`
@@ -47,6 +71,7 @@ Visit `http://localhost:3000` → Create Table → Share code → Play!
 - **Real-time**: Replace polling with WebSocket/SSE for lower latency
 - **Close Enough matching**: Add fuzzy string matching in host judging UI
 - **Escalating points**: Implement point rules based on speed/accuracy
+- **Production DB**: Swap SQLite for Postgres in `src/lib/db.ts`
 
 <!-- LOVABLE:BEGIN -->
 > [!IMPORTANT]
