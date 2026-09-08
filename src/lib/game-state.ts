@@ -916,6 +916,29 @@ export function tickOrchestration(): void {
   const now = Date.now();
 
   for (const table of tables.values()) {
+    // Handle ready timeout - force start if timeout expires
+    if (table.waitingForReady && table.readyDeadline && now >= table.readyDeadline) {
+      const participatingPlayers = table.players.filter((p) => !p.joinedMidRound);
+      const readyCount = participatingPlayers.filter((p) => p.ready).length;
+      
+      // Force start even if not all players ready
+      table.waitingForReady = false;
+      table.readyDeadline = null;
+      table.clipPlaying = true;
+      
+      // If running a routine, set the phase deadline now
+      if (table.routine && table.routine.status === "running") {
+        table.routine.phaseDeadline =
+          now + table.routine.config.guessDurationSec * 1000;
+      }
+      
+      addSystemMessage(
+        table.tableId,
+        `Ready timeout — starting anyway (${readyCount}/${participatingPlayers.length} ready)`
+      );
+      saveTablesToDisk();
+    }
+    
     if (!table.routine || table.routine.status !== "running") continue;
     if (!table.routine.phaseDeadline) continue;
 
