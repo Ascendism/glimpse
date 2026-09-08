@@ -81,7 +81,10 @@ function Index() {
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
   const [readyTimeRemaining, setReadyTimeRemaining] = useState<number | null>(null);
   const [hintMessage, setHintMessage] = useState<string | null>(null);
+  const [joinError, setJoinError] = useState<string | null>(null);
+  const [multiTabWarning, setMultiTabWarning] = useState(false);
   const pollInterval = useRef<number | null>(null);
+  const lastSeenStateRef = useRef<string>("");
 
   const currentPlayer = gameState?.players.find((p) => p.id === playerId);
   const isHost = currentPlayer?.isHost ?? false;
@@ -227,6 +230,7 @@ function Index() {
     e.preventDefault();
     if (!tableId || !playerName.trim()) return;
 
+    setJoinError(null);
     try {
       const data = await joinTableAction({ data: { tableId, playerName: playerName.trim() } });
       if (data.player) {
@@ -239,9 +243,13 @@ function Index() {
           sessionStorage.setItem("glimpse_playerId", data.player.id);
           sessionStorage.setItem("glimpse_playerName", data.player.name);
         }
+      } else {
+        // Null player means duplicate name
+        setJoinError(`Name "${playerName.trim()}" is already taken. Please choose a different name.`);
       }
     } catch (error) {
       console.error("Failed to join table:", error);
+      setJoinError("Failed to join table. Please try again.");
     }
   };
 
@@ -603,12 +611,41 @@ function Index() {
     [isHost, tableId, playerId]
   );
 
-  const copyJoinLink = () => {
+  const copyJoinLink = async () => {
     const url = `${window.location.origin}/?table=${tableId}`;
-    navigator.clipboard.writeText(url).then(() => {
-      setCopySuccess(true);
-      setTimeout(() => setCopySuccess(false), 2000);
-    });
+    
+    try {
+      // Check if clipboard API is available
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(url);
+        setCopySuccess(true);
+        setTimeout(() => setCopySuccess(false), 2000);
+      } else {
+        // Fallback: select and copy using deprecated execCommand
+        const textArea = document.createElement('textarea');
+        textArea.value = url;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.select();
+        try {
+          document.execCommand('copy');
+          setCopySuccess(true);
+          setTimeout(() => setCopySuccess(false), 2000);
+        } catch (err) {
+          console.error('Fallback copy failed:', err);
+          // Show error in button for 2 seconds
+          setCopySuccess(false);
+          alert(`Copy failed. Link: ${url}`);
+        } finally {
+          document.body.removeChild(textArea);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to copy join link:', err);
+      // Show error or fallback to showing the link
+      alert(`Copy failed. Please manually copy this link:\n\n${url}`);
+    }
   };
 
   // Lobby: create or join
@@ -678,9 +715,17 @@ function Index() {
                   <p className="text-sm text-white/50 uppercase tracking-wider">Table Code</p>
                   <p className="font-display text-4xl text-gold tracking-widest">{tableId}</p>
                 </div>
+                {joinError && (
+                  <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-300 text-center">
+                    {joinError}
+                  </div>
+                )}
                 <Input
                   value={playerName}
-                  onChange={(e) => setPlayerName(e.target.value)}
+                  onChange={(e) => {
+                    setPlayerName(e.target.value);
+                    setJoinError(null); // Clear error when user types
+                  }}
                   placeholder="Your name..."
                   className="rounded-full border-white/15 bg-white/5 px-4 py-3 text-center font-display text-xl tracking-wider placeholder:text-white/35"
                 />

@@ -44,6 +44,7 @@ export function GlimpsePlayer({
   const lastVideoIdRef = useRef<string>("");
   const readyReportedRef = useRef<boolean>(false);
   const [isInitializing, setIsInitializing] = useState(false);
+  const [videoError, setVideoError] = useState<string | null>(null);
   
   // Track if we've seeked to start for current video
   const hasInitialSeekedRef = useRef<boolean>(false);
@@ -70,6 +71,7 @@ export function GlimpsePlayer({
       }
       readyReportedRef.current = false;
       hasInitialSeekedRef.current = false; // Reset seek flag
+      setVideoError(null); // Clear error for new video
     }
 
     lastVideoIdRef.current = currentVideoId;
@@ -149,6 +151,31 @@ export function GlimpsePlayer({
 
         const handleError = (err: unknown) => {
           console.error("[GlimpsePlayer] Video error:", currentVideoId, err);
+          
+          // Provide user-friendly error messages
+          const error = player.error();
+          let errorMessage = "Video failed to load";
+          
+          if (error) {
+            switch (error.code) {
+              case 2: // MEDIA_ERR_NETWORK
+                errorMessage = "Network error loading video";
+                break;
+              case 3: // MEDIA_ERR_DECODE
+                errorMessage = "Video decode error";
+                break;
+              case 4: // MEDIA_ERR_SRC_NOT_SUPPORTED
+                errorMessage = isYouTube 
+                  ? "YouTube video unavailable (may be age-restricted, private, or region-locked)"
+                  : "Video format not supported";
+                break;
+              case 5: // MEDIA_ERR_ENCRYPTED
+                errorMessage = "Video is encrypted";
+                break;
+            }
+          }
+          
+          setVideoError(errorMessage);
         };
 
         // Video.js 'loadeddata' or 'canplay' indicates video is ready
@@ -339,7 +366,15 @@ export function GlimpsePlayer({
   }, [segmentDuration, timeStart, timeEnd]);
 
   return (
-    <div data-vjs-player className="vjs-glimpse-player">
+    <div data-vjs-player className="vjs-glimpse-player relative">
+      {videoError && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/80 rounded-lg">
+          <div className="text-center px-6 py-4 max-w-md">
+            <p className="text-red-400 font-semibold text-lg mb-2">⚠️ Video Error</p>
+            <p className="text-white/80 text-sm">{videoError}</p>
+          </div>
+        </div>
+      )}
       <video
         ref={videoRef}
         className="video-js vjs-default-skin vjs-big-play-centered"

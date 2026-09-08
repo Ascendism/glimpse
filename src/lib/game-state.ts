@@ -208,6 +208,17 @@ export function joinTable(tableId: string, playerName: string): Player | null {
   const table = getTable(tableId);
   if (!table) return null;
 
+  // Check for duplicate player name (case-insensitive)
+  const normalizedName = playerName.trim().toLowerCase();
+  const isDuplicate = table.players.some(
+    (p) => p.name.toLowerCase() === normalizedName
+  );
+  
+  if (isDuplicate) {
+    // Return null to indicate duplicate name rejection
+    return null;
+  }
+
   const playerId = Math.random().toString(36).substring(2, 15);
   const isFirstPlayer = table.players.length === 0;
   const isMidRound = table.phase !== "lobby" && table.currentClipId !== null;
@@ -625,6 +636,23 @@ export function startRoutine(tableId: string): boolean {
     table.routine.currentIndex = 0;
   }
 
+  // Validate that clips in playlist still exist in library
+  const validClipIds = table.routine.config.playlist.filter((clipId) =>
+    table.library.clips.some((clip) => clip.id === clipId)
+  );
+  
+  if (validClipIds.length === 0) {
+    addSystemMessage(tableId, "Cannot start routine: all clips have been deleted from library");
+    return false;
+  }
+  
+  // Update playlist to only include valid clips
+  if (validClipIds.length < table.routine.config.playlist.length) {
+    table.routine.config.playlist = validClipIds;
+    const removedCount = table.routine.config.playlist.length - validClipIds.length;
+    addSystemMessage(tableId, `${removedCount} clip(s) were removed from playlist (deleted from library)`);
+  }
+
   table.routine.status = "running";
 
   // Start first clip but wait for ready handshake
@@ -888,6 +916,29 @@ export function tickOrchestration(): void {
   const now = Date.now();
 
   for (const table of tables.values()) {
+    // Handle ready timeout - force start if timeout expires
+    if (table.waitingForReady && table.readyDeadline && now >= table.readyDeadline) {
+      const participatingPlayers = table.players.filter((p) => !p.joinedMidRound);
+      const readyCount = participatingPlayers.filter((p) => p.ready).length;
+      
+      // Force start even if not all players ready
+      table.waitingForReady = false;
+      table.readyDeadline = null;
+      table.clipPlaying = true;
+      
+      // If running a routine, set the phase deadline now
+      if (table.routine && table.routine.status === "running") {
+        table.routine.phaseDeadline =
+          now + table.routine.config.guessDurationSec * 1000;
+      }
+      
+      addSystemMessage(
+        table.tableId,
+        `Ready timeout — starting anyway (${readyCount}/${participatingPlayers.length} ready)`
+      );
+      saveTablesToDisk();
+    }
+    
     if (!table.routine || table.routine.status !== "running") continue;
     if (!table.routine.phaseDeadline) continue;
 
