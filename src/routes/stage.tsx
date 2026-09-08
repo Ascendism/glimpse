@@ -2,7 +2,7 @@ import { createFileRoute, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PuzzleBoard } from "@/components/PuzzleBoard";
 import { GlimpsePlayer } from "@/components/GlimpsePlayer";
-import { GLIMPSE_CLIPS, layoutPhrase, type Cell } from "@/lib/puzzle";
+import { layoutPhrase, type Cell } from "@/lib/puzzle";
 import type { GameState } from "@/lib/game-state";
 import { PHASE_DURATIONS } from "@/lib/game-state";
 import { fetchGameState as fetchGameStateAction } from "@/lib/game-actions";
@@ -33,7 +33,7 @@ function StageView() {
   const pollInterval = useRef<number | null>(null);
 
   const currentClip = gameState?.currentClipId
-    ? GLIMPSE_CLIPS.find((c) => c.id === gameState.currentClipId)
+    ? gameState.library.clips.find((c) => c.id === gameState.currentClipId)
     : null;
 
   const rows: Cell[][] = useMemo(
@@ -76,9 +76,10 @@ function StageView() {
     }
   }, [tableId]);
 
-  // Auto-reveal when phase is reveal (separate effect for clean logic)
+  // Auto-reveal: hint reveals during play, full reveal at end
   useEffect(() => {
     if (gameState?.phase === "reveal" && gameState.revealedTitle && currentClip) {
+      // Full reveal with animation
       const ids: string[] = [];
       rows.forEach((row, r) =>
         row.forEach((cell, c) => {
@@ -89,11 +90,15 @@ function StageView() {
       ids.forEach((id, i) => (nextDelays[id] = i * 110));
       setDelays(nextDelays);
       setRevealed(new Set(ids));
-    } else if (gameState?.phase !== "reveal") {
+    } else if (gameState?.phase === "playing" || gameState?.phase === "guessing" || gameState?.phase === "judging") {
+      // Show hint reveals without animation
+      setRevealed(new Set(gameState?.hintRevealedPositions ?? []));
+      setDelays({});
+    } else {
       setRevealed(new Set());
       setDelays({});
     }
-  }, [gameState?.phase, gameState?.revealedTitle, currentClip, rows]);
+  }, [gameState?.phase, gameState?.revealedTitle, gameState?.hintRevealedPositions, currentClip, rows]);
 
   useEffect(() => {
     if (tableId) {
@@ -173,18 +178,41 @@ function StageView() {
               </div>
             )}
 
-            {gameState?.currentClipId &&
-              currentClip?.youtubeId &&
-              gameState.phase !== "reveal" && (
-                <div className="board-frame aspect-video relative">
-                  <GlimpsePlayer
-                    youtubeId={currentClip.youtubeId}
-                    playing={gameState.clipPlaying}
-                    positionSec={gameState.clipPosition}
-                    isController={false}
-                  />
+            {/* Show hint reveals during gameplay if any letters revealed */}
+            {gameState?.phase !== "reveal" && currentClip && gameState.hintRevealedPositions.length > 0 && (
+              <div className="space-y-2">
+                <PuzzleBoard rows={rows} revealed={revealed} delays={delays} />
+                <div className="text-center text-sm text-gold/70 font-display uppercase tracking-wider">
+                  {gameState.hintRevealedPositions.length} hint{gameState.hintRevealedPositions.length !== 1 ? 's' : ''} revealed
                 </div>
-              )}
+              </div>
+            )}
+
+            {gameState?.currentClipId &&
+              currentClip &&
+              gameState.phase !== "reveal" && (() => {
+                const clipMetadata = currentClip.metadata;
+                const isYouTubeClip = clipMetadata && "youtubeId" in clipMetadata;
+                const isUploadClip = clipMetadata && "fileName" in clipMetadata;
+                const youtubeId = isYouTubeClip ? clipMetadata.youtubeId : undefined;
+                const videoUrl = isUploadClip ? currentClip.source.id : undefined;
+                const timeStart = clipMetadata?.timeStart ?? 0;
+                const timeEnd = clipMetadata?.timeEnd;
+                
+                return (
+                  <div className="board-frame aspect-video relative">
+                    <GlimpsePlayer
+                      youtubeId={youtubeId}
+                      videoUrl={videoUrl}
+                      playing={gameState.clipPlaying}
+                      positionSec={gameState.clipPosition}
+                      isController={false}
+                      timeStart={timeStart}
+                      timeEnd={timeEnd}
+                    />
+                  </div>
+                );
+              })()}
 
             {gameState?.phase === "lobby" && (
               <div className="board-frame flex items-center justify-center py-20">
