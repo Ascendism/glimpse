@@ -110,6 +110,8 @@ Automated browser test launched to verify:
 dbcd98d feat: implement hint reveal system with vote-based and manual host triggers
 cc0aa81 docs: add iteration 9 summary document
 4f2f4e8 fix: show hint controls during manual rounds, not just routines
+b4e7e39 docs: update summary with manual round fix
+f5e8523 fix: initialize voteState and segmentLadder in routine rounds
 ```
 
 ## Pull Request
@@ -129,17 +131,26 @@ Status: Open, ready for review
 ✅ **Preserved UI**: Lovable PuzzleBoard chrome unchanged
 ✅ **Build green**: No compilation errors
 
-## Bug Fix: Manual Round Support
+## Bug Fixes
 
-### Issue Discovered
-Initial implementation placed hint controls inside the routine monitor section, making them invisible during manual (non-routine) rounds.
+### Bug #1: Manual Round Support
+**Issue**: Initial implementation placed hint controls inside the routine monitor section, making them invisible during manual (non-routine) rounds.
 
-### Fix Applied
+**Fix Applied**:
 - Created separate "Live Round Monitor" section that appears during any `playing` phase
 - Moved vote counters and "Give Hint" button out of routine-only section
-- Now works for both manual rounds and routine orchestration
 
 **Commit**: `4f2f4e8` - "fix: show hint controls during manual rounds, not just routines"
+
+### Bug #2: Routine Round Initialization
+**Issue**: `startRoutine()` and routine phase advance functions didn't initialize `voteState` and `segmentLadder`, causing Live Round Monitor to not render during routine-based rounds despite the UI fix.
+
+**Fix Applied**:
+- Added `segmentLadder` and `voteState` initialization to `startRoutine()`
+- Added same initialization to routine phase advance (when moving to next clip)
+- Now both manual and routine rounds properly initialize voting and segment state
+
+**Commit**: `f5e8523` - "fix: initialize voteState and segmentLadder in routine rounds"
 
 ## Still Open / Future Work (Iteration 10)
 
