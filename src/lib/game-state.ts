@@ -80,6 +80,7 @@ export type GameState = {
   readyDeadline: number | null; // Epoch milliseconds when ready wait expires
   segmentLadder: SegmentLadder | null; // Progressive duration segments
   voteState: VoteState | null; // Player votes during round
+  hintRevealedPositions: string[]; // Cell IDs (e.g., "0-5") revealed via hint votes
   library: {
     clips: LibraryClip[];
     playlists: Playlist[];
@@ -173,6 +174,7 @@ export function createTable(): string {
     readyDeadline: null,
     segmentLadder: null,
     voteState: null,
+    hintRevealedPositions: [],
     library: {
       clips: migrateClipsToLibrary(), // Seed with migrated clips
       playlists: [],
@@ -354,6 +356,9 @@ export function startRound(tableId: string, clipId: string): boolean {
     threshold: Math.ceil(eligibleCount / 2),
   };
   
+  // Reset hint reveals for new round
+  table.hintRevealedPositions = [];
+  
   // Set phase timing (will start counting when all players ready)
   const now = Date.now();
   table.phaseStartTime = now;
@@ -442,6 +447,7 @@ export function resetRound(tableId: string): boolean {
   table.phaseDeadline = null;
   table.waitingForReady = false;
   table.readyDeadline = null;
+  table.hintRevealedPositions = [];
   
   // Reset all players' locked-in state, clear mid-round flags, and reset ready
   table.players.forEach((p) => {
@@ -493,6 +499,7 @@ export function restartSession(tableId: string): boolean {
   table.phaseDeadline = null;
   table.waitingForReady = false;
   table.readyDeadline = null;
+  table.hintRevealedPositions = [];
   
   // Reset all players' locked-in state, mid-round flags, and ready state but keep scores
   table.players.forEach((p) => {
@@ -631,6 +638,7 @@ export function startRoutine(tableId: string): boolean {
   table.clipPlaying = false; // Don't start playing until all clients ready
   table.clipPosition = 0;
   table.revealedTitle = false;
+  table.hintRevealedPositions = [];
   table.sessionPaused = false;
   table.waitingForReady = true; // Wait for ready handshake
   table.readyDeadline = Date.now() + READY_TIMEOUT_SEC * 1000; // Set timeout
@@ -814,6 +822,7 @@ function advanceRoutinePhase(table: GameState): void {
         table.clipPlaying = false; // Don't play until all clients ready
         table.clipPosition = 0;
         table.revealedTitle = false;
+        table.hintRevealedPositions = [];
         table.waitingForReady = true;
         table.readyDeadline = Date.now() + READY_TIMEOUT_SEC * 1000; // Set timeout
         table.players.forEach((p) => {
@@ -1116,13 +1125,57 @@ export function castVote(tableId: string, playerId: string, voteType: "advance" 
       // Reset advance votes after execution (successful or not)
       table.voteState.advanceVotes = [];
     } else {
-      // Reveal hint
-      addSystemMessage(
-        tableId, 
-        `Vote passed (${votes.length}/${table.voteState.threshold}): revealing hint`
-      );
-      // TODO: Wire actual hint reveal (e.g., reveal one letter from title)
-      // For now, stub as a system message
+      // Reveal hint - pick unrevealed letter position(s) from current clip title
+      const revealCount = 1; // Number of letters to reveal per hint vote
+      const clip = table.library.clips.find(c => c.id === table.currentClipId);
+      
+      if (clip) {
+        const { layoutPhrase } = require("./puzzle");
+        const rows = layoutPhrase(clip.title);
+        
+        // Collect all letter positions
+        const letterPositions: string[] = [];
+        rows.forEach((row: any[], r: number) => {
+          row.forEach((cell: any, c: number) => {
+            if (cell.kind === "letter") {
+              letterPositions.push(`${r}-${c}`);
+            }
+          });
+        });
+        
+        // Filter out already revealed positions
+        const unrevealedPositions = letterPositions.filter(
+          pos => !table.hintRevealedPositions.includes(pos)
+        );
+        
+        // Pick random positions to reveal
+        const toReveal = Math.min(revealCount, unrevealedPositions.length);
+        if (toReveal > 0) {
+          for (let i = 0; i < toReveal; i++) {
+            const randomIndex = Math.floor(Math.random() * unrevealedPositions.length);
+            const position = unrevealedPositions.splice(randomIndex, 1)[0];
+            if (position) {
+              table.hintRevealedPositions.push(position);
+            }
+          }
+          
+          addSystemMessage(
+            tableId, 
+            `Vote passed (${votes.length}/${table.voteState.threshold}): ${toReveal} letter${toReveal > 1 ? 's' : ''} revealed!`
+          );
+        } else {
+          addSystemMessage(
+            tableId, 
+            `Vote passed but all letters already revealed`
+          );
+        }
+      } else {
+        addSystemMessage(
+          tableId, 
+          `Vote passed but no clip loaded`
+        );
+      }
+      
       table.voteState.hintVotes = [];
     }
   }
@@ -1136,6 +1189,51 @@ export function resetVoteState(tableId: string): boolean {
   if (!table) return false;
 
   table.voteState = null;
+  saveTablesToDisk();
+  return true;
+}
+
+// Manual hint reveal (host override)
+export function revealHint(tableId: string): boolean {
+  const table = getTable(tableId);
+  if (!table || !table.currentClipId) return false;
+  
+  const revealCount = 1; // Number of letters to reveal
+  const clip = table.library.clips.find(c => c.id === table.currentClipId);
+  
+  if (!clip) return false;
+  
+  const { layoutPhrase } = require("./puzzle");
+  const rows = layoutPhrase(clip.title);
+  
+  // Collect all letter positions
+  const letterPositions: string[] = [];
+  rows.forEach((row: any[], r: number) => {
+    row.forEach((cell: any, c: number) => {
+      if (cell.kind === "letter") {
+        letterPositions.push(`${r}-${c}`);
+      }
+    });
+  });
+  
+  // Filter out already revealed positions
+  const unrevealedPositions = letterPositions.filter(
+    pos => !table.hintRevealedPositions.includes(pos)
+  );
+  
+  // Pick random positions to reveal
+  const toReveal = Math.min(revealCount, unrevealedPositions.length);
+  if (toReveal === 0) return false; // All letters already revealed
+  
+  for (let i = 0; i < toReveal; i++) {
+    const randomIndex = Math.floor(Math.random() * unrevealedPositions.length);
+    const position = unrevealedPositions.splice(randomIndex, 1)[0];
+    if (position) {
+      table.hintRevealedPositions.push(position);
+    }
+  }
+  
+  addSystemMessage(tableId, `Host revealed ${toReveal} letter${toReveal > 1 ? 's' : ''}`);
   saveTablesToDisk();
   return true;
 }

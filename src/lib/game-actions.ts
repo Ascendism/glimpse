@@ -31,6 +31,7 @@ import {
   advanceToNextSegment as advanceToNextSegmentInMemory,
   castVote as castVoteInMemory,
   recalculateVoteThreshold as recalculateVoteThresholdInMemory,
+  revealHint as revealHintInMemory,
   type RoutineConfig,
 } from "./game-state";
 import type { LibraryClip, Playlist } from "./library";
@@ -230,6 +231,9 @@ export const performHostAction = createServerFn({ method: "POST" })
         break;
       case "skip_phase":
         success = skipPhaseInMemory(normalizedTableId);
+        break;
+      case "reveal_hint":
+        success = revealHintInMemory(normalizedTableId);
         break;
       default:
         throw new Error("Unknown action");

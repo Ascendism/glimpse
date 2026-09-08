@@ -134,9 +134,10 @@ function Index() {
     [currentClip],
   );
 
-  // Auto-reveal tiles for all clients when phase is reveal
+  // Auto-reveal tiles: hint reveals during play, full reveal at end
   useEffect(() => {
     if (gameState?.phase === "reveal" && gameState.revealedTitle && currentClip) {
+      // Full reveal with animation
       const ids: string[] = [];
       rows.forEach((row, r) =>
         row.forEach((cell, c) => {
@@ -147,11 +148,15 @@ function Index() {
       ids.forEach((id, i) => (nextDelays[id] = i * 110));
       setDelays(nextDelays);
       setRevealed(new Set(ids));
-    } else if (gameState?.phase !== "reveal") {
+    } else if (gameState?.phase === "playing" || gameState?.phase === "guessing" || gameState?.phase === "judging") {
+      // Show hint reveals without animation
+      setRevealed(new Set(gameState?.hintRevealedPositions ?? []));
+      setDelays({});
+    } else {
       setRevealed(new Set());
       setDelays({});
     }
-  }, [gameState?.phase, gameState?.revealedTitle, currentClip, rows]);
+  }, [gameState?.phase, gameState?.revealedTitle, gameState?.hintRevealedPositions, currentClip, rows]);
 
   const fetchGameState = useCallback(async () => {
     if (!tableId) return;
@@ -538,6 +543,9 @@ function Index() {
     }
   };
   
+  // Manual hint reveal (host override)
+  const giveHint = () => hostAction("reveal_hint");
+  
   // Player voting
   const vote = async (voteType: "advance" | "hint") => {
     if (!tableId || !playerId) return;
@@ -759,6 +767,16 @@ function Index() {
                   <span className="rounded-full border border-gold/40 bg-black/30 px-5 py-2 font-display text-lg tracking-[0.25em] text-gold uppercase">
                     {currentClip.category} · {currentClip.type}
                   </span>
+                </div>
+              </div>
+            )}
+
+            {/* Show hint reveals during gameplay if any letters revealed */}
+            {gameState?.phase !== "reveal" && currentClip && gameState.hintRevealedPositions.length > 0 && (
+              <div className="space-y-2">
+                <PuzzleBoard rows={rows} revealed={revealed} delays={delays} />
+                <div className="text-center text-sm text-gold/70 font-display uppercase tracking-wider">
+                  {gameState.hintRevealedPositions.length} hint{gameState.hintRevealedPositions.length !== 1 ? 's' : ''} revealed
                 </div>
               </div>
             )}
@@ -1044,6 +1062,15 @@ function Index() {
                             {gameState.voteState.hintVotes.length}/{gameState.voteState.threshold}
                             {gameState.voteState.hintVotes.length >= gameState.voteState.threshold && " ✓"}
                           </span>
+                        </div>
+                        <div className="pt-1">
+                          <Button
+                            onClick={giveHint}
+                            className="w-full px-2 py-1 h-7 text-xs rounded-full bg-white/10 hover:bg-white/20"
+                            size="sm"
+                          >
+                            Give Hint
+                          </Button>
                         </div>
                       </div>
                     )}
