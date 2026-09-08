@@ -37,14 +37,14 @@ import {
 import type { LibraryClip, Playlist } from "./library";
 
 export const createTable = createServerFn({ method: "POST" })
-  .validator((data: { hostName?: string }) => data)
+  .validator((data: { hostName?: string; discordId?: string }) => data)
   .handler(async ({ data }) => {
-    const { hostName } = data;
+    const { hostName, discordId } = data;
     const tableId = createTableInMemory();
     
     // If hostName provided, auto-join the host
     if (hostName && hostName.trim()) {
-      const player = joinTableInMemory(tableId, hostName.trim());
+      const player = joinTableInMemory(tableId, hostName.trim(), discordId ?? null);
       if (player) {
         return { tableId, player };
       }
@@ -66,12 +66,12 @@ export const fetchGameState = createServerFn({ method: "GET" })
   });
 
 export const joinTable = createServerFn({ method: "POST" })
-  .validator((data: { tableId: string; playerName: string }) => data)
+  .validator((data: { tableId: string; playerName: string; discordId?: string }) => data)
   .handler(async ({ data }) => {
-    const { tableId, playerName } = data;
+    const { tableId, playerName, discordId } = data;
     // Normalize table code to uppercase
     const normalizedTableId = tableId.toUpperCase();
-    const player = joinTableInMemory(normalizedTableId, playerName);
+    const player = joinTableInMemory(normalizedTableId, playerName, discordId ?? null);
     if (!player) {
       throw new Error("Table not found");
     }
