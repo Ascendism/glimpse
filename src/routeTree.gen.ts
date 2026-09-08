@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LeaderboardRouteImport } from './routes/leaderboard'
 import { Route as StageRouteImport } from './routes/stage'
+import { Route as AuthDiscordCallbackRouteImport } from './routes/auth.discord.callback'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -28,35 +29,44 @@ const StageRoute = StageRouteImport.update({
   path: '/stage',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthDiscordCallbackRoute = AuthDiscordCallbackRouteImport.update({
+  id: '/auth/discord/callback',
+  path: '/auth/discord/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/leaderboard': typeof LeaderboardRoute
   '/stage': typeof StageRoute
+  '/auth/discord/callback': typeof AuthDiscordCallbackRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/leaderboard': typeof LeaderboardRoute
   '/stage': typeof StageRoute
+  '/auth/discord/callback': typeof AuthDiscordCallbackRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/leaderboard': typeof LeaderboardRoute
   '/stage': typeof StageRoute
+  '/auth/discord/callback': typeof AuthDiscordCallbackRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/leaderboard' | '/stage'
+  fullPaths: '/' | '/leaderboard' | '/stage' | '/auth/discord/callback'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/leaderboard' | '/stage'
-  id: '__root__' | '/' | '/leaderboard' | '/stage'
+  to: '/' | '/leaderboard' | '/stage' | '/auth/discord/callback'
+  id: '__root__' | '/' | '/leaderboard' | '/stage' | '/auth/discord/callback'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LeaderboardRoute: typeof LeaderboardRoute
   StageRoute: typeof StageRoute
+  AuthDiscordCallbackRoute: typeof AuthDiscordCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -82,6 +92,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StageRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/auth/discord/callback': {
+      id: '/auth/discord/callback'
+      path: '/auth/discord/callback'
+      fullPath: '/auth/discord/callback'
+      preLoaderRoute: typeof AuthDiscordCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -89,6 +106,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LeaderboardRoute: LeaderboardRoute,
   StageRoute: StageRoute,
+  AuthDiscordCallbackRoute: AuthDiscordCallbackRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

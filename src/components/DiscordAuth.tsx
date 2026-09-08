@@ -12,12 +12,9 @@ export function DiscordAuth({ onAuthChange }: { onAuthChange?: (auth: AuthState)
     loadAuthState();
 
     const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get("code");
     const shouldLogin = urlParams.get("discord_login");
 
-    if (code) {
-      handleCallback(code);
-    } else if (shouldLogin) {
+    if (shouldLogin) {
       initiateLogin();
     }
   }, []);
@@ -36,7 +33,7 @@ export function DiscordAuth({ onAuthChange }: { onAuthChange?: (auth: AuthState)
 
   async function initiateLogin() {
     try {
-      const redirectUri = `${window.location.origin}${window.location.pathname}`;
+      const redirectUri = `${window.location.origin}/auth/discord/callback`;
       const { authUrl, state } = await initiateDiscordLogin({ data: { redirectUri } });
       
       sessionStorage.setItem("discord_oauth_state", state);
@@ -47,27 +44,6 @@ export function DiscordAuth({ onAuthChange }: { onAuthChange?: (auth: AuthState)
     }
   }
 
-  async function handleCallback(code: string) {
-    try {
-      const redirectUri = `${window.location.origin}${window.location.pathname}`;
-      const { sessionId, user } = await handleDiscordCallback({ data: { code, redirectUri } });
-
-      document.cookie = `glimpse_session=${sessionId}; path=/; max-age=${7 * 24 * 60 * 60}; samesite=lax`;
-
-      const newAuthState: AuthState = {
-        isAuthenticated: true,
-        user,
-        sessionId,
-      };
-      setAuthState(newAuthState);
-      onAuthChange?.(newAuthState);
-
-      window.history.replaceState({}, document.title, window.location.pathname);
-    } catch (error) {
-      console.error("Discord callback failed:", error);
-      alert("Failed to complete Discord login. Please try again.");
-    }
-  }
 
   async function handleLogout() {
     try {

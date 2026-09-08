@@ -114,10 +114,15 @@ export const getAuthState = createServerFn({ method: "GET" })
   });
 
 export const initiateDiscordLogin = createServerFn({ method: "POST" })
-  .validator((data: { redirectUri: string }) => data)
+  .validator((data: { redirectUri?: string }) => data)
   .handler(async ({ data }) => {
+    // Default to port 8080 for playtesting compatibility
+    const redirectUri = data.redirectUri || 
+      process.env.DISCORD_REDIRECT_URI || 
+      "http://localhost:8080/auth/discord/callback";
+    
     const state = generateRandomState();
-    const authUrl = getDiscordOAuthURL(data.redirectUri, state);
+    const authUrl = getDiscordOAuthURL(redirectUri, state);
     return { authUrl, state };
   });
 

@@ -32,9 +32,12 @@ Guest players (without Discord login) can still play but won't appear on the lea
 1. Still in the **OAuth2** section, scroll to **Redirects**
 2. Click **Add Redirect**
 3. Add your redirect URI(s):
-   - For local development: `http://localhost:3000`
-   - For production: `https://yourdomain.com`
+   - For local development: `http://localhost:8080/auth/discord/callback`
+   - For Vite dev (port 5173): `http://localhost:5173/auth/discord/callback`
+   - For production: `https://yourdomain.com/auth/discord/callback`
 4. Click **Save Changes**
+
+**Note**: Playtesting uses port 8080 by default. If you're using Vite's default port 5173, add that redirect URI as well.
 
 ## Step 4: Configure Environment Variables
 
@@ -47,9 +50,14 @@ Guest players (without Discord login) can still play but won't appear on the lea
    ```env
    DISCORD_CLIENT_ID=your_client_id_from_step_2
    DISCORD_CLIENT_SECRET=your_client_secret_from_step_2
-   DISCORD_REDIRECT_URI=http://localhost:3000
+   DISCORD_REDIRECT_URI=http://localhost:8080/auth/discord/callback
    SESSION_SECRET=generate_a_random_string_here
    ```
+
+   **Port Notes**:
+   - Default is `8080` for playtesting compatibility
+   - If using Vite dev server (port 5173), use `http://localhost:5173/auth/discord/callback`
+   - Ensure the port matches your dev server and the redirect URI is added in Discord
 
 3. Generate a secure `SESSION_SECRET`:
    ```bash
@@ -66,14 +74,16 @@ Guest players (without Discord login) can still play but won't appear on the lea
    ```bash
    npm run dev
    ```
+   
+   By default, Vite runs on port 5173. For playtesting on port 8080, configure your server accordingly.
 
-2. Visit `http://localhost:3000`
+2. Visit your local server (e.g., `http://localhost:8080` or `http://localhost:5173`)
 
 3. Click the **Login with Discord** button
 
 4. You should be redirected to Discord to authorize the application
 
-5. After authorizing, you'll be redirected back to Glimpse logged in
+5. After authorizing, you'll be redirected to `/auth/discord/callback`, then back to the home page logged in
 
 ## Production Deployment
 
@@ -84,7 +94,7 @@ Make sure to set these environment variables in your production environment:
 ```env
 DISCORD_CLIENT_ID=<your_production_client_id>
 DISCORD_CLIENT_SECRET=<your_production_client_secret>
-DISCORD_REDIRECT_URI=https://yourdomain.com
+DISCORD_REDIRECT_URI=https://yourdomain.com/auth/discord/callback
 SESSION_SECRET=<secure_random_string>
 ```
 
@@ -99,7 +109,9 @@ SESSION_SECRET=<secure_random_string>
 
 ### Discord Application Settings for Production
 
-1. Add your production domain to **OAuth2 Redirects** in Discord Developer Portal
+1. Add your production domain to **OAuth2 Redirects** in Discord Developer Portal:
+   - Format: `https://yourdomain.com/auth/discord/callback`
+   - Must include the full path including `/auth/discord/callback`
 2. Consider adding a bot user if you want to integrate Discord notifications (optional)
 3. Update your application's branding (icon, description) in the **General Information** section
 
@@ -113,8 +125,9 @@ SESSION_SECRET=<secure_random_string>
 ### OAuth redirect fails
 
 - Check that your `DISCORD_REDIRECT_URI` exactly matches what's configured in Discord Developer Portal
-- Ensure the redirect URI includes the protocol (`http://` or `https://`)
-- For local dev, use `http://localhost:3000` (not `127.0.0.1`)
+- Ensure the redirect URI includes the protocol (`http://` or `https://`) AND the full path (`/auth/discord/callback`)
+- For local dev, use `http://localhost:8080/auth/discord/callback` (not `127.0.0.1`)
+- Port must match your dev server (8080 for playtesting, 5173 for Vite default)
 
 ### "Invalid OAuth2 redirect_uri" error
 
