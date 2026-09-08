@@ -9,6 +9,7 @@ export type Player = {
   lockedIn: boolean;
   joinedMidRound: boolean;  // True if joined after round started, cleared on round reset
   ready: boolean; // Client reports video loaded and ready to play
+  discordId: string | null; // Discord user ID if logged in
 };
 
 export type Guess = {
@@ -204,7 +205,7 @@ function addSystemMessage(tableId: string, text: string): void {
   table.chat.push(message);
 }
 
-export function joinTable(tableId: string, playerName: string): Player | null {
+export function joinTable(tableId: string, playerName: string, discordId: string | null = null): Player | null {
   const table = getTable(tableId);
   if (!table) return null;
 
@@ -231,6 +232,7 @@ export function joinTable(tableId: string, playerName: string): Player | null {
     lockedIn: false,
     joinedMidRound: isMidRound,
     ready: false,
+    discordId,
   };
 
   table.players.push(player);
