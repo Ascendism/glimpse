@@ -1,0 +1,373 @@
+{
+  "$schema": "tools.manifest.v1",
+  "tools": [
+    {
+      "name": "glimpse.table.create",
+      "description": "Create a new multiplayer game table and return the table code for players to join",
+      "category": "table",
+      "parameters": {},
+      "returns": {
+        "type": "object",
+        "properties": {
+          "tableId": {
+            "type": "string",
+            "description": "6-character uppercase table code for joining"
+          },
+          "status": {
+            "type": "string",
+            "description": "Table creation status"
+          }
+        }
+      }
+    },
+    {
+      "name": "glimpse.table.inspect",
+      "description": "Get complete state of a game table including players, scores, current clip, guesses, and chat",
+      "category": "table",
+      "parameters": {
+        "tableId": {
+          "type": "string",
+          "required": true,
+          "description": "Table code to inspect"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "Complete game state snapshot"
+      }
+    },
+    {
+      "name": "glimpse.table.list",
+      "description": "List all active game tables with basic info (ID, player count, phase, current clip)",
+      "category": "table",
+      "parameters": {},
+      "returns": {
+        "type": "array",
+        "description": "Array of table summaries"
+      }
+    },
+    {
+      "name": "glimpse.library.list",
+      "description": "List all clips in the library with metadata (title, category, type, duration, source)",
+      "category": "library",
+      "parameters": {
+        "tableId": {
+          "type": "string",
+          "required": true,
+          "description": "Table whose library to inspect"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "clips": {
+            "type": "array",
+            "description": "Array of library clips"
+          },
+          "playlists": {
+            "type": "array",
+            "description": "Array of playlists"
+          }
+        }
+      }
+    },
+    {
+      "name": "glimpse.library.addYoutubeClip",
+      "description": "Add a YouTube clip to the library with title, category, and playback window",
+      "category": "library",
+      "parameters": {
+        "tableId": {
+          "type": "string",
+          "required": true,
+          "description": "Table to add clip to"
+        },
+        "title": {
+          "type": "string",
+          "required": true,
+          "description": "Clip title (what players will guess)"
+        },
+        "youtubeId": {
+          "type": "string",
+          "required": true,
+          "description": "YouTube video ID"
+        },
+        "category": {
+          "type": "string",
+          "required": true,
+          "description": "Category (e.g., 'Action Movie', 'Pop Song')"
+        },
+        "type": {
+          "type": "string",
+          "required": true,
+          "enum": ["Movie", "TV Show", "Song", "Other"],
+          "description": "Media type"
+        },
+        "duration": {
+          "type": "number",
+          "required": false,
+          "default": 60,
+          "description": "Total video duration in seconds"
+        },
+        "timeStart": {
+          "type": "number",
+          "required": false,
+          "default": 0,
+          "description": "Clip start offset in seconds"
+        },
+        "timeEnd": {
+          "type": "number",
+          "required": false,
+          "description": "Clip end offset in seconds (defaults to duration)"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "clipId": {
+            "type": "string",
+            "description": "Generated clip ID"
+          }
+        }
+      }
+    },
+    {
+      "name": "glimpse.library.inspect",
+      "description": "Get detailed information about a specific clip including metadata and usage stats",
+      "category": "library",
+      "parameters": {
+        "tableId": {
+          "type": "string",
+          "required": true,
+          "description": "Table ID"
+        },
+        "clipId": {
+          "type": "string",
+          "required": true,
+          "description": "Clip ID to inspect"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "Detailed clip information"
+      }
+    },
+    {
+      "name": "glimpse.routine.configure",
+      "description": "Configure an automated routine with playlist, durations, and auto-advance settings",
+      "category": "routine",
+      "parameters": {
+        "tableId": {
+          "type": "string",
+          "required": true,
+          "description": "Table to configure routine for"
+        },
+        "config": {
+          "type": "object",
+          "required": true,
+          "properties": {
+            "playlist": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Array of clip IDs to play in sequence"
+            },
+            "guessDurationSec": {
+              "type": "number",
+              "description": "Seconds players have to guess"
+            },
+            "judgingDurationSec": {
+              "type": "number",
+              "description": "Seconds for host to judge guesses"
+            },
+            "revealDurationSec": {
+              "type": "number",
+              "description": "Seconds to show answer before next clip"
+            },
+            "autoAdvance": {
+              "type": "boolean",
+              "description": "Auto-advance to next clip after reveal"
+            },
+            "pointsCorrect": {
+              "type": "number",
+              "description": "Points awarded for correct guesses"
+            }
+          }
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "glimpse.routine.start",
+      "description": "Start the configured routine - begins playing clips from the playlist",
+      "category": "routine",
+      "parameters": {
+        "tableId": {
+          "type": "string",
+          "required": true,
+          "description": "Table to start routine on"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "glimpse.routine.pause",
+      "description": "Pause the running routine - can be resumed later",
+      "category": "routine",
+      "parameters": {
+        "tableId": {
+          "type": "string",
+          "required": true,
+          "description": "Table to pause routine on"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "glimpse.routine.stop",
+      "description": "Stop the routine completely and return to lobby",
+      "category": "routine",
+      "parameters": {
+        "tableId": {
+          "type": "string",
+          "required": true,
+          "description": "Table to stop routine on"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "glimpse.routine.inspect",
+      "description": "Get current routine status including progress, timing, and configuration",
+      "category": "routine",
+      "parameters": {
+        "tableId": {
+          "type": "string",
+          "required": true,
+          "description": "Table to inspect routine for"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "description": "Routine status and configuration"
+      }
+    },
+    {
+      "name": "glimpse.game.getState",
+      "description": "Get a compact game state snapshot (lighter than table.inspect, suitable for polling)",
+      "category": "game",
+      "parameters": {
+        "tableId": {
+          "type": "string",
+          "required": true,
+          "description": "Table ID"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "phase": {
+            "type": "string",
+            "enum": ["lobby", "playing", "guessing", "judging", "reveal"]
+          },
+          "currentClip": {
+            "type": "object",
+            "description": "Current clip info (if any)"
+          },
+          "players": {
+            "type": "array",
+            "description": "Player list with scores"
+          },
+          "guessCount": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    {
+      "name": "glimpse.segment.advance",
+      "description": "Host override: manually advance to next segment duration (1s → 2s → 3s → 5s)",
+      "category": "game",
+      "parameters": {
+        "tableId": {
+          "type": "string",
+          "required": true,
+          "description": "Table ID"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "newDuration": {
+            "type": "number",
+            "description": "New segment duration in seconds"
+          }
+        }
+      }
+    },
+    {
+      "name": "glimpse.hint.give",
+      "description": "Host override: reveal hint letters from the title",
+      "category": "game",
+      "parameters": {
+        "tableId": {
+          "type": "string",
+          "required": true,
+          "description": "Table ID"
+        }
+      },
+      "returns": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "revealedCount": {
+            "type": "number",
+            "description": "Number of letters revealed"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -70,6 +70,15 @@ npm run build
 - **YouTube embeds** for clip playback
 - **Lovable board UI** (stage-bg, gold colors, flip tiles, Bebas/Barlow fonts)
 
+## Cortex Package
+
+Glimpse is also available as a **Cortex Store package** (`cortex.glimpse`) that exposes multiplayer game operations for agent-driven table management, library CRUD, and routine orchestration.
+
+- **For agents/ops**: See [PACKAGE.md](./PACKAGE.md) for package structure, ops documentation, and installation
+- **For standalone play**: Continue with the instructions above (`npm run dev`)
+
+The Cortex package provides ops like `glimpse.table.create`, `glimpse.library.addYoutubeClip`, and `glimpse.routine.start` for programmatic game management.
+
 ## Notes
 
 This project was reshaped from a Wheel of Fortune letter-guessing game into Glimpse, preserving the Lovable-seeded board UI and styling while completely replacing the gameplay with identify-the-clip multiplayer mechanics.

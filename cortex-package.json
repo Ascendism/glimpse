@@ -1,0 +1,27 @@
+{
+  "schema": "cortex-package.v1",
+  "id": "cortex.glimpse",
+  "name": "Glimpse",
+  "version": "0.1.0",
+  "description": "Identify-the-clip multiplayer party game.",
+  "license": "UNLICENSED",
+  "publisher": { "id": "ascendism", "name": "Ascendism", "url": "https://github.com/Ascendism" },
+  "source": { "kind": "github", "owner": "Ascendism", "repo": "glimpse", "defaultBranch": "main" },
+  "engines": { "cortex": ">=0.8.0", "node": ">=18" },
+  "entry": {
+    "cortex": "./adapters/cortex/activate.js",
+    "mcp": "./adapters/mcp/server.js",
+    "ops": "./ops/index.js"
+  },
+  "adapters": ["cortex", "mcp"],
+  "toolsManifest": "./tools.manifest.json",
+  "permissions": [
+    { "id": "fs.read", "scope": "workspace", "reason": "Read game/project files" },
+    { "id": "fs.write", "scope": "workspace", "reason": "Write package/session data" },
+    { "id": "net.outbound", "scope": "optional", "reason": "YouTube / media", "required": false }
+  ],
+  "entitlement": { "kind": "free", "productId": null, "features": ["*"] },
+  "ui": { "skill": { "enabled": false, "host": "cortex" } },
+  "data": { "schemaVersion": 1 },
+  "release": { "artifact": "cortex-glimpse-${version}.tgz", "checksums": "SHA256SUMS.txt" }
+}
