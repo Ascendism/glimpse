@@ -208,6 +208,17 @@ export function joinTable(tableId: string, playerName: string): Player | null {
   const table = getTable(tableId);
   if (!table) return null;
 
+  // Check for duplicate player name (case-insensitive)
+  const normalizedName = playerName.trim().toLowerCase();
+  const isDuplicate = table.players.some(
+    (p) => p.name.toLowerCase() === normalizedName
+  );
+  
+  if (isDuplicate) {
+    // Return null to indicate duplicate name rejection
+    return null;
+  }
+
   const playerId = Math.random().toString(36).substring(2, 15);
   const isFirstPlayer = table.players.length === 0;
   const isMidRound = table.phase !== "lobby" && table.currentClipId !== null;
@@ -623,6 +634,23 @@ export function startRoutine(tableId: string): boolean {
   // Reset to beginning if idle/stopped
   if (table.routine.status === "idle" || table.routine.status === "stopped") {
     table.routine.currentIndex = 0;
+  }
+
+  // Validate that clips in playlist still exist in library
+  const validClipIds = table.routine.config.playlist.filter((clipId) =>
+    table.library.clips.some((clip) => clip.id === clipId)
+  );
+  
+  if (validClipIds.length === 0) {
+    addSystemMessage(tableId, "Cannot start routine: all clips have been deleted from library");
+    return false;
+  }
+  
+  // Update playlist to only include valid clips
+  if (validClipIds.length < table.routine.config.playlist.length) {
+    table.routine.config.playlist = validClipIds;
+    const removedCount = table.routine.config.playlist.length - validClipIds.length;
+    addSystemMessage(tableId, `${removedCount} clip(s) were removed from playlist (deleted from library)`);
   }
 
   table.routine.status = "running";
