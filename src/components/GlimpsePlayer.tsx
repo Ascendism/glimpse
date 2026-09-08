@@ -132,7 +132,6 @@ export function GlimpsePlayer({
               try {
                 playerRef.current.currentTime(timeStart);
                 hasInitialSeekedRef.current = true;
-                console.log("[GlimpsePlayer] Seeked to start:", timeStart);
               } catch (err) {
                 console.warn("[GlimpsePlayer] Error seeking to start:", err);
               }
@@ -141,12 +140,10 @@ export function GlimpsePlayer({
         };
 
         const handleLoadedData = () => {
-          console.log("[GlimpsePlayer] Video loaded:", currentVideoId);
           handleReady();
         };
 
         const handleCanPlay = () => {
-          console.log("[GlimpsePlayer] Video can play:", currentVideoId);
           handleReady();
         };
 
@@ -161,7 +158,6 @@ export function GlimpsePlayer({
 
         // Player ready event
         player.ready(() => {
-          console.log("[GlimpsePlayer] Player ready:", currentVideoId);
           setIsInitializing(false);
         });
       } catch (err) {
@@ -309,7 +305,6 @@ export function GlimpsePlayer({
         if (currentTime >= segmentEnd) {
           isSeeking = true;
           playerRef.current.currentTime(timeStart);
-          console.log("[GlimpsePlayer] Looped segment:", timeStart, "→", segmentEnd, "from", currentTime.toFixed(2));
         } else if (currentTime < timeStart - 0.5) {
           // If somehow we're before the start (user manual seek), clamp to start
           isSeeking = true;
