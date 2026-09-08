@@ -108,6 +108,8 @@ Automated browser test launched to verify:
 
 ```
 dbcd98d feat: implement hint reveal system with vote-based and manual host triggers
+cc0aa81 docs: add iteration 9 summary document
+4f2f4e8 fix: show hint controls during manual rounds, not just routines
 ```
 
 ## Pull Request
@@ -126,6 +128,18 @@ Status: Open, ready for review
 ✅ **Stage view**: OBS/casting view shows hints
 ✅ **Preserved UI**: Lovable PuzzleBoard chrome unchanged
 ✅ **Build green**: No compilation errors
+
+## Bug Fix: Manual Round Support
+
+### Issue Discovered
+Initial implementation placed hint controls inside the routine monitor section, making them invisible during manual (non-routine) rounds.
+
+### Fix Applied
+- Created separate "Live Round Monitor" section that appears during any `playing` phase
+- Moved vote counters and "Give Hint" button out of routine-only section
+- Now works for both manual rounds and routine orchestration
+
+**Commit**: `4f2f4e8` - "fix: show hint controls during manual rounds, not just routines"
 
 ## Still Open / Future Work (Iteration 10)
 
