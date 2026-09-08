@@ -642,6 +642,18 @@ export function startRoutine(tableId: string): boolean {
   table.sessionPaused = false;
   table.waitingForReady = true; // Wait for ready handshake
   table.readyDeadline = Date.now() + READY_TIMEOUT_SEC * 1000; // Set timeout
+  
+  // Initialize segment ladder for progressive playback
+  table.segmentLadder = resetSegmentLadder();
+  
+  // Initialize vote state
+  const eligibleCount = table.players.filter((p) => !p.joinedMidRound).length;
+  table.voteState = {
+    advanceVotes: [],
+    hintVotes: [],
+    threshold: Math.ceil(eligibleCount / 2),
+  };
+  
   table.players.forEach((p) => {
     p.lockedIn = false;
     p.ready = false;
@@ -825,6 +837,16 @@ function advanceRoutinePhase(table: GameState): void {
         table.hintRevealedPositions = [];
         table.waitingForReady = true;
         table.readyDeadline = Date.now() + READY_TIMEOUT_SEC * 1000; // Set timeout
+        
+        // Initialize segment ladder and vote state for new clip
+        table.segmentLadder = resetSegmentLadder();
+        const eligibleCount = table.players.filter((p) => !p.joinedMidRound).length;
+        table.voteState = {
+          advanceVotes: [],
+          hintVotes: [],
+          threshold: Math.ceil(eligibleCount / 2),
+        };
+        
         table.players.forEach((p) => {
           p.lockedIn = false;
           p.ready = false;
