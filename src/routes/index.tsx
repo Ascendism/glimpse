@@ -980,7 +980,64 @@ function Index() {
                   Operator Console
                 </h3>
 
-                {/* Monitor */}
+                {/* Live Round Monitor (manual or routine) */}
+                {gameState?.phase === "playing" && gameState.voteState && (
+                  <div className="rounded-lg border border-gold/20 bg-gold/5 p-3 space-y-2">
+                    <div className="text-xs text-white/50 uppercase tracking-wider mb-2">Live Round</div>
+                    {gameState.segmentLadder && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-white/60">Segment</span>
+                        <span className="font-display text-gold">
+                          {gameState.segmentLadder.segmentDurations[gameState.segmentLadder.currentSegmentIndex]}s
+                          {gameState.segmentLadder.currentSegmentIndex < gameState.segmentLadder.segmentDurations.length - 1 && (
+                            <Button
+                              onClick={advanceSegment}
+                              className="ml-2 px-2 py-1 h-6 text-xs rounded-full bg-gold/20 hover:bg-gold/30"
+                              size="sm"
+                            >
+                              → {gameState.segmentLadder.segmentDurations[gameState.segmentLadder.currentSegmentIndex + 1]}s
+                            </Button>
+                          )}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-white/60">Advance Votes</span>
+                      <span className={cn(
+                        "font-display text-xs",
+                        gameState.voteState.advanceVotes.length >= gameState.voteState.threshold 
+                          ? "text-gold font-bold" 
+                          : "text-white/70"
+                      )}>
+                        {gameState.voteState.advanceVotes.length}/{gameState.voteState.threshold}
+                        {gameState.voteState.advanceVotes.length >= gameState.voteState.threshold && " ✓"}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-white/60">Hint Votes</span>
+                      <span className={cn(
+                        "font-display text-xs",
+                        gameState.voteState.hintVotes.length >= gameState.voteState.threshold 
+                          ? "text-white font-bold" 
+                          : "text-white/70"
+                      )}>
+                        {gameState.voteState.hintVotes.length}/{gameState.voteState.threshold}
+                        {gameState.voteState.hintVotes.length >= gameState.voteState.threshold && " ✓"}
+                      </span>
+                    </div>
+                    <div className="pt-1">
+                      <Button
+                        onClick={giveHint}
+                        className="w-full px-2 py-1 h-7 text-xs rounded-full bg-white/10 hover:bg-white/20"
+                        size="sm"
+                      >
+                        Give Hint
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Routine Monitor */}
                 {gameState?.routine && gameState.routine.status !== "idle" && (
                   <div className="rounded-lg border border-gold/20 bg-gold/5 p-3 space-y-2">
                     <div className="flex items-center justify-between">
@@ -1020,60 +1077,6 @@ function Index() {
                         {gameState.players.filter(p => !p.joinedMidRound && p.lockedIn).length} / {gameState.players.filter(p => !p.joinedMidRound).length}
                       </span>
                     </div>
-                    {gameState.segmentLadder && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-white/60">Segment</span>
-                        <span className="font-display text-gold">
-                          {gameState.segmentLadder.segmentDurations[gameState.segmentLadder.currentSegmentIndex]}s
-                          {gameState.segmentLadder.currentSegmentIndex < gameState.segmentLadder.segmentDurations.length - 1 && (
-                            <Button
-                              onClick={advanceSegment}
-                              className="ml-2 px-2 py-1 h-6 text-xs rounded-full bg-gold/20 hover:bg-gold/30"
-                              size="sm"
-                            >
-                              → {gameState.segmentLadder.segmentDurations[gameState.segmentLadder.currentSegmentIndex + 1]}s
-                            </Button>
-                          )}
-                        </span>
-                      </div>
-                    )}
-                    {gameState.voteState && gameState.phase === "playing" && (
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-white/60">Advance Votes</span>
-                          <span className={cn(
-                            "font-display text-xs",
-                            gameState.voteState.advanceVotes.length >= gameState.voteState.threshold 
-                              ? "text-gold font-bold" 
-                              : "text-white/70"
-                          )}>
-                            {gameState.voteState.advanceVotes.length}/{gameState.voteState.threshold}
-                            {gameState.voteState.advanceVotes.length >= gameState.voteState.threshold && " ✓"}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-white/60">Hint Votes</span>
-                          <span className={cn(
-                            "font-display text-xs",
-                            gameState.voteState.hintVotes.length >= gameState.voteState.threshold 
-                              ? "text-white font-bold" 
-                              : "text-white/70"
-                          )}>
-                            {gameState.voteState.hintVotes.length}/{gameState.voteState.threshold}
-                            {gameState.voteState.hintVotes.length >= gameState.voteState.threshold && " ✓"}
-                          </span>
-                        </div>
-                        <div className="pt-1">
-                          <Button
-                            onClick={giveHint}
-                            className="w-full px-2 py-1 h-7 text-xs rounded-full bg-white/10 hover:bg-white/20"
-                            size="sm"
-                          >
-                            Give Hint
-                          </Button>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 )}
 
