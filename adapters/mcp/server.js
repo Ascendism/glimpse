@@ -2,32 +2,97 @@
 
 /**
  * Glimpse MCP Server
- * 
- * Model Context Protocol server that exposes Glimpse ops as MCP tools.
- * This is a stub implementation that wires the SAME createOps from ops/index.js.
- * 
+ *
+ * Model Context Protocol adapter that exposes Glimpse ops as MCP tools.
+ * Host mcpBridge expects createOps() → array of { name, description, inputSchema, handler }.
+ *
  * MCP Spec: https://modelcontextprotocol.io/
- * 
+ *
  * @module glimpse/adapters/mcp
  */
 
-import { createOps } from '../../ops/index.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { createOps as createOpsMap } from '../../ops/index.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+function loadToolsManifest() {
+  const manifestPath = path.join(__dirname, '..', '..', 'tools.manifest.json');
+  try {
+    if (!fs.existsSync(manifestPath)) return null;
+    return JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
 
 /**
- * MCP Server Implementation
- * 
- * This is a minimal stub that demonstrates how to wire Glimpse ops
- * into an MCP server. A full implementation would:
- * 
- * 1. Import @modelcontextprotocol/sdk
- * 2. Create StdioServerTransport
- * 3. Register tools from ops manifest
- * 4. Handle tool calls by invoking ops
- * 5. Stream responses back to client
- * 
- * For now, this stub validates that ops can be loaded in a Node context.
+ * Convert tools.manifest.json parameter map (with required flags) into JSON Schema.
  */
+function parametersToInputSchema(parameters) {
+  if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) {
+    return { type: 'object', properties: {}, required: [] };
+  }
 
+  const properties = {};
+  const required = [];
+
+  for (const [key, raw] of Object.entries(parameters)) {
+    if (!raw || typeof raw !== 'object') {
+      properties[key] = { type: 'string' };
+      continue;
+    }
+    const { required: isRequired, default: defaultValue, ...rest } = raw;
+    const prop = { ...rest };
+    if (defaultValue !== undefined) prop.default = defaultValue;
+    properties[key] = prop;
+    if (isRequired === true) required.push(key);
+  }
+
+  return { type: 'object', properties, required };
+}
+
+function metaForName(manifest, name) {
+  if (!manifest || typeof manifest !== 'object') return null;
+  const list = Array.isArray(manifest.tools)
+    ? manifest.tools
+    : Array.isArray(manifest.ops)
+      ? manifest.ops
+      : [];
+  return list.find((t) => t && t.name === name) || null;
+}
+
+/**
+ * Host contract: return array of { name, description, inputSchema, handler }.
+ * @param {object} [ctx]
+ * @returns {Array<{name: string, description: string, inputSchema: object, handler: Function}>}
+ */
+export function createOps(ctx = {}) {
+  const opsMap = createOpsMap(ctx);
+  const manifest = loadToolsManifest();
+
+  return Object.keys(opsMap).map((name) => {
+    const meta = metaForName(manifest, name) || {};
+    const inputSchema =
+      meta.inputSchema ||
+      parametersToInputSchema(meta.parameters) ||
+      { type: 'object', properties: {}, required: [] };
+
+    return {
+      name,
+      description: meta.description || `${name} from cortex.glimpse`,
+      inputSchema,
+      handler: async (args) => opsMap[name](args || {})
+    };
+  });
+}
+
+/**
+ * MCP Server stub — validates that ops can be loaded in a Node context.
+ */
 async function main() {
   const logger = {
     info: (...args) => console.error('[MCP INFO]', ...args),
@@ -41,41 +106,35 @@ async function main() {
   };
 
   try {
-    // Create ops instance
-    const ops = createOps({ logger });
-    const opNames = Object.keys(ops);
-    
+    const tools = createOps({ logger });
+    const opNames = tools.map((t) => t.name);
+
     logger.info(`Glimpse MCP Server stub loaded with ${opNames.length} ops`);
     logger.info('Ops available:', opNames.join(', '));
-    
-    // Full MCP server implementation would:
-    // 1. Set up stdio transport
-    // 2. Register each op as an MCP tool with schema from tools.manifest.json
-    // 3. Handle incoming tool_call requests
-    // 4. Invoke corresponding op and return result
-    
     logger.warn('This is a stub MCP server. Full MCP protocol implementation pending.');
-    logger.info('To use Glimpse ops, call them directly from ops/index.js or via Cortex adapter.');
-    
-    // For stub purposes, demonstrate that we can call an op
+    logger.info('Host mcpBridge uses createOps() export; call ops via Cortex adapter.');
+
     if (process.argv.includes('--test')) {
       logger.info('\nTesting glimpse.table.create...');
-      const result = await ops['glimpse.table.create']();
+      const createTool = tools.find((t) => t.name === 'glimpse.table.create');
+      const result = await createTool.handler({});
       logger.info('Result:', JSON.stringify(result, null, 2));
     } else {
       logger.info('\nTo test ops, run with --test flag');
       logger.info('Example: node adapters/mcp/server.js --test');
     }
-    
   } catch (err) {
     logger.error('Failed to initialize MCP server:', err);
     process.exit(1);
   }
 }
 
-// Run if executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch(err => {
+const isDirect =
+  process.argv[1] &&
+  path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);
+
+if (isDirect) {
+  main().catch((err) => {
     console.error('Fatal error:', err);
     process.exit(1);
   });

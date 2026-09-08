@@ -2,7 +2,7 @@
   "schema": "cortex-package.v1",
   "id": "cortex.glimpse",
   "name": "Glimpse",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Identify-the-clip multiplayer party game.",
   "license": "UNLICENSED",
   "publisher": { "id": "ascendism", "name": "Ascendism", "url": "https://github.com/Ascendism" },
