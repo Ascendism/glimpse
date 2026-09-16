@@ -1,5 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
+import { setCookie } from "@tanstack/start-server-core";
 import { userDb, sessionDb } from "./db";
+import { randomBytes } from "crypto";
 
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 
@@ -122,14 +124,20 @@ export const initiateDiscordLogin = createServerFn({ method: "POST" })
       "http://localhost:8080/auth/discord/callback";
     
     const state = generateRandomState();
+    storeOAuthState(state); // Store for validation on callback
     const authUrl = getDiscordOAuthURL(redirectUri, state);
     return { authUrl, state };
   });
 
 export const handleDiscordCallback = createServerFn({ method: "POST" })
-  .validator((data: { code: string; redirectUri: string }) => data)
-  .handler(async ({ data }): Promise<{ sessionId: string; user: DiscordUser }> => {
-    const { code, redirectUri } = data;
+  .validator((data: { code: string; state: string; redirectUri: string }) => data)
+  .handler(async ({ data }): Promise<{ user: DiscordUser }> => {
+    const { code, state, redirectUri } = data;
+
+    // Validate OAuth state to prevent CSRF attacks
+    if (!validateAndConsumeOAuthState(state)) {
+      throw new Error("Invalid or expired OAuth state. Please try logging in again.");
+    }
 
     const tokenData = await exchangeCodeForToken(code, redirectUri);
     const discordUser = await fetchDiscordUser(tokenData.access_token);
@@ -143,8 +151,17 @@ export const handleDiscordCallback = createServerFn({ method: "POST" })
 
     const session = sessionDb.create(user.discord_id);
 
+    // Set secure session cookie server-side
+    const isProduction = process.env.NODE_ENV === "production";
+    setCookie("glimpse_session", session.session_id, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 7 * 24 * 60 * 60, // 7 days
+    });
+
     return {
-      sessionId: session.session_id,
       user: {
         id: user.discord_id,
         username: user.username,
@@ -160,6 +177,14 @@ export const logout = createServerFn({ method: "POST" })
     if (sessionId) {
       sessionDb.deleteBySessionId(sessionId);
     }
+    
+    // Clear session cookie
+    setCookie("glimpse_session", "", {
+      httpOnly: true,
+      path: "/",
+      maxAge: 0, // Expire immediately
+    });
+    
     return { success: true };
   });
 
@@ -174,11 +199,37 @@ function getSessionIdFromRequest(request: Request): string | null {
   return sessionCookie.split("=")[1] || null;
 }
 
+// OAuth state store (in-memory, expires after 10 minutes)
+const oauthStates = new Map<string, number>(); // state -> expiresAt timestamp
+
 function generateRandomState(): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < 32; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  return randomBytes(32).toString("hex");
+}
+
+function storeOAuthState(state: string): void {
+  const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+  oauthStates.set(state, expiresAt);
+  
+  // Clean up expired states
+  for (const [key, expires] of oauthStates.entries()) {
+    if (Date.now() > expires) {
+      oauthStates.delete(key);
+    }
   }
-  return result;
+}
+
+function validateAndConsumeOAuthState(state: string): boolean {
+  const expiresAt = oauthStates.get(state);
+  if (!expiresAt) {
+    return false; // State not found
+  }
+  
+  if (Date.now() > expiresAt) {
+    oauthStates.delete(state);
+    return false; // State expired
+  }
+  
+  // One-time use: delete after validation
+  oauthStates.delete(state);
+  return true;
 }
