@@ -14,6 +14,7 @@ function DiscordCallback() {
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code");
+    const state = urlParams.get("state");
     const error = urlParams.get("error");
 
     if (error) {
@@ -23,29 +24,29 @@ function DiscordCallback() {
       return;
     }
 
-    if (!code) {
-      setError("No authorization code received");
+    if (!code || !state) {
+      setError("Missing authorization code or state");
       setProcessing(false);
       setTimeout(() => navigate({ to: "/" }), 3000);
       return;
     }
 
-    handleCallback(code);
+    handleCallback(code, state);
   }, [navigate]);
 
-  async function handleCallback(code: string) {
+  async function handleCallback(code: string, state: string) {
     try {
       const redirectUri = `${window.location.origin}/auth/discord/callback`;
-      const { sessionId, user } = await handleDiscordCallback({ data: { code, redirectUri } });
+      const { user } = await handleDiscordCallback({ data: { code, state, redirectUri } });
 
-      // Set session cookie
-      document.cookie = `glimpse_session=${sessionId}; path=/; max-age=${7 * 24 * 60 * 60}; samesite=lax`;
+      // Session cookie is now set by the server with HttpOnly/Secure flags
+      // No need to set it client-side
 
       // Redirect back to main page
       navigate({ to: "/" });
     } catch (err) {
       console.error("Discord callback failed:", err);
-      setError("Failed to complete Discord login. Please try again.");
+      setError(err instanceof Error ? err.message : "Failed to complete Discord login. Please try again.");
       setProcessing(false);
       setTimeout(() => navigate({ to: "/" }), 3000);
     }

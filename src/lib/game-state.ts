@@ -1,5 +1,6 @@
 import type { LibraryClip, Playlist, SegmentLadder, VoteState } from "./library";
 import { migrateClipsToLibrary, resetSegmentLadder } from "./library";
+import { layoutPhrase } from "./puzzle";
 
 export type Player = {
   id: string;
@@ -1203,7 +1204,6 @@ export function castVote(tableId: string, playerId: string, voteType: "advance" 
       const clip = table.library.clips.find(c => c.id === table.currentClipId);
       
       if (clip) {
-        const { layoutPhrase } = require("./puzzle");
         const rows = layoutPhrase(clip.title);
         
         // Collect all letter positions
@@ -1276,7 +1276,6 @@ export function revealHint(tableId: string): boolean {
   
   if (!clip) return false;
   
-  const { layoutPhrase } = require("./puzzle");
   const rows = layoutPhrase(clip.title);
   
   // Collect all letter positions

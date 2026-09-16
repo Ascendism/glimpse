@@ -48,8 +48,8 @@ export function DiscordAuth({ onAuthChange }: { onAuthChange?: (auth: AuthState)
   async function handleLogout() {
     try {
       await logout({ data: undefined });
-      document.cookie = "glimpse_session=; path=/; max-age=0";
       
+      // Cookie is cleared by server
       const newAuthState: AuthState = {
         isAuthenticated: false,
         user: null,
