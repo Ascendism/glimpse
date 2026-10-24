@@ -7,16 +7,19 @@ Glimpse is a multiplayer identify-the-clip party game built with TanStack Start 
 ## Architecture
 
 ### Frontend
+
 - **Main route**: `src/routes/index.tsx` — handles lobby (create/join), game table UI, and rendering
 - **PuzzleBoard**: `src/components/PuzzleBoard.tsx` — flip-tile reveal for titles (unchanged from Lovable seed)
-- **Polling**: Client polls `/api/table/{tableId}/state` every 1 second for game state updates
+- **Polling**: Client polls `fetchGameState` (TanStack server function) every second using its private seat cookie
 
 ### Backend
+
 - **Game state**: `src/lib/game-state.ts` — in-memory multiplayer state management
 - **Clips**: `src/lib/puzzle.ts` — `GLIMPSE_CLIPS` array with YouTube IDs, titles, categories
-- **API routes**: `src/routes/api.table.*` — file-based routes for create, join, state, guess, chat, host actions
+- **API routes**: `src/lib/game-actions.ts` — server functions for create, join, state, guess, chat, host actions
 
 ### Multiplayer Flow
+
 1. Host creates table → gets `tableId`
 2. Players join with table code + name → receive `playerId`
 3. Game phases: `lobby` → `playing` → `guessing` → `judging` → `reveal`
@@ -24,6 +27,7 @@ Glimpse is a multiplayer identify-the-clip party game built with TanStack Start 
 5. Players: watch synced clip, submit guesses, chat
 
 ### Key Changes from Lovable Seed
+
 - Removed letter-guessing loop (alphabet keyboard, vowel buy, "Solve It")
 - Replaced `PUZZLES` with `GLIMPSE_CLIPS` (title, type, category, youtubeId)
 - Added multiplayer: players, scores, phases, guesses, chat
@@ -43,25 +47,29 @@ Visit `http://localhost:3000` → Create Table → Share code → Play!
 ## Discord OAuth + Leaderboard
 
 ### Authentication
+
 - Discord OAuth2 login for player identity tracking
 - Session-based authentication (7-day cookie expiry)
 - Guest mode: players can still play without Discord login
 
 ### Database
-- SQLite for local dev (`/tmp/glimpse-dev-state/glimpse.db`)
+
+- SQLite in `GLIMPSE_STATE_DIR` (defaults to `.data/glimpse.db`); deploy one Node server with persistent storage
 - Postgres-ready schema: `users`, `sessions`, `leaderboard_entries`
 - `src/lib/db.ts` - Database layer with migration-free schema init
 - `src/lib/discord-oauth.ts` - OAuth flow + session management
 
 ### Leaderboard
+
 - Global stats: total points, games played, wins, avg points
 - `/leaderboard` route - top 100 players with rankings
 - Discord-linked players only (guests excluded from leaderboard)
 - `src/lib/leaderboard-actions.ts` - Stats aggregation
 
 ### Setup
+
 - Requires Discord app credentials (see `DISCORD_SETUP.md`)
-- Environment variables: `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_REDIRECT_URI`, `SESSION_SECRET`
+- Environment variables: `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_REDIRECT_URI`, optional `GLIMPSE_STATE_DIR`
 - `.env.example` provided
 
 ## Extending
@@ -74,6 +82,7 @@ Visit `http://localhost:3000` → Create Table → Share code → Play!
 - **Production DB**: Swap SQLite for Postgres in `src/lib/db.ts`
 
 <!-- LOVABLE:BEGIN -->
+
 > [!IMPORTANT]
 > This project is connected to [Lovable](https://lovable.dev). Avoid rewriting
 > published git history — force pushing, or rebasing/amending/squashing commits
@@ -82,4 +91,5 @@ Visit `http://localhost:3000` → Create Table → Share code → Play!
 >
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
+
 <!-- LOVABLE:END -->

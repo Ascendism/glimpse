@@ -1,187 +1,45 @@
-# Discord OAuth Setup Guide
+# Discord login and leaderboard setup
 
-This guide will help you set up Discord OAuth2 authentication for Glimpse's leaderboard system.
+1. Copy `.env.example` to `.env` beside `package.json`. A blank `.env` is already prepared in the audit checkout.
+2. Open https://discord.com/developers/applications and create/select your application.
+3. Put the application's Client ID in `DISCORD_CLIENT_ID` and OAuth2 Client Secret in `DISCORD_CLIENT_SECRET`.
+4. Under OAuth2 > Redirects, add `http://localhost:3000/auth/discord/callback`. Set `DISCORD_REDIRECT_URI` to exactly that value.
+5. Run `npm ci`, then `npm run dev -- --port 3000`. Restart the server after editing `.env`.
 
-## Overview
+For a hosted game, register `https://YOUR-DOMAIN/auth/discord/callback` in Discord and use the same URL in the server environment. Everyone must use that domain. Use HTTPS. These settings belong on the server, never in `VITE_` variables or committed files. No bot token, bot invite, or Discord server permissions are needed: login requests only the `identify` scope.
 
-The leaderboard system tracks player statistics across games using Discord login. Players who login with Discord will:
-- Have their scores tracked globally across all games
-- Appear on the public leaderboard
-- See their personal stats and ranking
-- Have their Discord avatar displayed
+## Playing and recording results
 
-Guest players (without Discord login) can still play but won't appear on the leaderboard.
+Log in before creating or joining a table. Guest play remains available. An invite survives the Discord redirect. Each Discord account can occupy one seat per table. Refreshing a tab restores its seat; leaving releases it. Login cookies are HttpOnly, expire after seven days, and logout deletes the server session.
 
-## Step 1: Create a Discord Application
+The host selects clips and judges answers; the host does not compete. Players submit or lock guesses. Late joiners watch until the next round. The host can pause, skip phases, provide hints, and adjust scores. After judging, choose **Finish Game & Save Scores** from reveal or lobby. Results come from the server's scores and can only be saved once per game. Ties share placement. Guests and the host are excluded from global stats. **New Game** clears table scores and starts a fresh leaderboard result. Scores are host-judged party results, not a tamper-proof competitive ranking.
 
-1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
-2. Click **New Application**
-3. Give your application a name (e.g., "Glimpse Game")
-4. Click **Create**
+A host who leaves explicitly transfers hosting. If a host closes their tab or loses connection, another player can take over after 45 seconds; this resets the current round. An expired seat returns to the join form.
 
-## Step 2: Get Your Client ID and Secret
+## Deployment and storage
 
-1. In your application page, go to the **OAuth2** section
-2. Copy your **Client ID** - you'll need this for `DISCORD_CLIENT_ID`
-3. Click **Reset Secret** to generate a new client secret
-4. Copy the secret immediately - you'll need this for `DISCORD_CLIENT_SECRET`
-   - ⚠️ **Important**: The secret will only be shown once. Store it securely!
+Use Node 22.22 or newer and a **single Node server process**:
 
-## Step 3: Configure OAuth2 Redirects
-
-1. Still in the **OAuth2** section, scroll to **Redirects**
-2. Click **Add Redirect**
-3. Add your redirect URI(s):
-   - For local development: `http://localhost:8080/auth/discord/callback`
-   - For Vite dev (port 5173): `http://localhost:5173/auth/discord/callback`
-   - For production: `https://yourdomain.com/auth/discord/callback`
-4. Click **Save Changes**
-
-**Note**: Playtesting uses port 8080 by default. If you're using Vite's default port 5173, add that redirect URI as well.
-
-## Step 4: Configure Environment Variables
-
-1. Copy `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
-   ```
-
-2. Edit `.env` and fill in your values:
-   ```env
-   DISCORD_CLIENT_ID=your_client_id_from_step_2
-   DISCORD_CLIENT_SECRET=your_client_secret_from_step_2
-   DISCORD_REDIRECT_URI=http://localhost:8080/auth/discord/callback
-   SESSION_SECRET=generate_a_random_string_here
-   ```
-
-   **Port Notes**:
-   - Default is `8080` for playtesting compatibility
-   - If using Vite dev server (port 5173), use `http://localhost:5173/auth/discord/callback`
-   - Ensure the port matches your dev server and the redirect URI is added in Discord
-
-3. Generate a secure `SESSION_SECRET`:
-   ```bash
-   # Using Node.js
-   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-   
-   # Or using openssl
-   openssl rand -hex 32
-   ```
-
-## Step 5: Test Your Setup
-
-1. Start the development server:
-   ```bash
-   npm run dev
-   ```
-   
-   By default, Vite runs on port 5173. For playtesting on port 8080, configure your server accordingly.
-
-2. Visit your local server (e.g., `http://localhost:8080` or `http://localhost:5173`)
-
-3. Click the **Login with Discord** button
-
-4. You should be redirected to Discord to authorize the application
-
-5. After authorizing, you'll be redirected to `/auth/discord/callback`, then back to the home page logged in
-
-## Production Deployment
-
-### Environment Variables
-
-Make sure to set these environment variables in your production environment:
-
-```env
-DISCORD_CLIENT_ID=<your_production_client_id>
-DISCORD_CLIENT_SECRET=<your_production_client_secret>
-DISCORD_REDIRECT_URI=https://yourdomain.com/auth/discord/callback
-SESSION_SECRET=<secure_random_string>
+```sh
+npm ci
+npm run build
+npm start
 ```
 
-### Security Notes
+The start command reads `.env`. `PORT` controls the production port. The Node build is intentional: SQLite native bindings and filesystem state cannot run in the former Cloudflare worker target. Set `GLIMPSE_STATE_DIR` to a writable persistent volume. The default is `.data/` in the working directory, containing `glimpse.db` and `tables.json`. Back up that directory. An ephemeral filesystem loses accounts, sessions, and scores on redeploy. Multiple replicas require a shared database/state architecture; do not run this implementation in a multi-worker cluster.
 
-- ✅ **DO**: Store secrets in your deployment platform's secret management system
-- ✅ **DO**: Use HTTPS in production (required for cookies and OAuth)
-- ✅ **DO**: Generate a unique, secure `SESSION_SECRET` for production
-- ❌ **DON'T**: Commit `.env` or any secrets to version control
-- ❌ **DON'T**: Reuse the same `SESSION_SECRET` across different environments
-- ❌ **DON'T**: Share your `DISCORD_CLIENT_SECRET` publicly
+The older build stored data in the operating system's temporary `glimpse-dev-state` directory. To preserve those records, stop the old process and set `GLIMPSE_STATE_DIR` to that existing directory, or copy its files to the new persistent directory while stopped. Old tables lack private seat tokens and are discarded; create a new table. Old leaderboard records remain readable.
 
-### Discord Application Settings for Production
+Use YouTube clips that allow embedding or public hosted video URLs. Browser-local blob/file URLs cannot be shared with other devices, so the local-file form has been replaced with hosted URLs. Browser autoplay restrictions can require each viewer to tap **Enable video and sound**. External YouTube availability, embedding restrictions, and region restrictions remain provider-dependent.
 
-1. Add your production domain to **OAuth2 Redirects** in Discord Developer Portal:
-   - Format: `https://yourdomain.com/auth/discord/callback`
-   - Must include the full path including `/auth/discord/callback`
-2. Consider adding a bot user if you want to integrate Discord notifications (optional)
-3. Update your application's branding (icon, description) in the **General Information** section
+## Verification
 
-## Troubleshooting
+```sh
+npm run typecheck
+npm test
+npm run build
+npx playwright install chromium --only-shell
+npm run test:e2e
+```
 
-### "Discord login is not configured" error
-
-- Make sure `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` are set in `.env`
-- Restart your development server after adding environment variables
-
-### OAuth redirect fails
-
-- Check that your `DISCORD_REDIRECT_URI` exactly matches what's configured in Discord Developer Portal
-- Ensure the redirect URI includes the protocol (`http://` or `https://`) AND the full path (`/auth/discord/callback`)
-- For local dev, use `http://localhost:8080/auth/discord/callback` (not `127.0.0.1`)
-- Port must match your dev server (8080 for playtesting, 5173 for Vite default)
-
-### "Invalid OAuth2 redirect_uri" error
-
-- Go to Discord Developer Portal → Your App → OAuth2 → Redirects
-- Make sure your redirect URI is added there exactly as it appears in your `.env`
-
-### Session not persisting
-
-- Check that cookies are enabled in your browser
-- Ensure `SESSION_SECRET` is set
-- For production, make sure your site uses HTTPS
-
-## Optional: Database Configuration
-
-By default, Glimpse uses SQLite for local development (stored in `/tmp/glimpse-dev-state/glimpse.db`).
-
-### Using PostgreSQL (Production)
-
-To use PostgreSQL instead of SQLite:
-
-1. Install the PostgreSQL driver:
-   ```bash
-   npm install pg
-   ```
-
-2. Update `src/lib/db.ts` to use PostgreSQL connection instead of SQLite
-
-3. Set database connection environment variables:
-   ```env
-   DATABASE_URL=postgresql://user:password@host:port/database
-   ```
-
-The current database schema is designed to be portable and will work with PostgreSQL with minimal changes to the connection layer.
-
-## Features
-
-### For Players
-
-- **Login with Discord**: One-click authentication
-- **Global Leaderboard**: See top players across all games
-- **Personal Stats**: View your total points, games played, wins, and average score
-- **Discord Integration**: Your Discord avatar and username are displayed
-- **Guest Mode**: Can still play without logging in (won't appear on leaderboard)
-
-### For Developers
-
-- **Persistent Storage**: SQLite for dev, PostgreSQL-ready for production
-- **Session Management**: Secure cookie-based sessions (7-day expiry)
-- **Privacy**: Only stores Discord ID, username, and avatar
-- **Modular**: Easy to extend with additional OAuth providers
-
-## Support
-
-For issues or questions:
-1. Check this guide for common setup problems
-2. Verify your Discord app configuration
-3. Check server logs for detailed error messages
+Browser tests use separate host/player/stage contexts and a simulated Discord provider in the test server only. They exercise real application cookies, RPC authorization, OAuth state checks, invite restoration, refresh, scoring, leaderboard, logout, and media playback. A final real Discord consent/login must be checked after supplying credentials; automated tests cannot validate an unconfigured Discord application.

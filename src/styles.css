@@ -201,6 +201,27 @@
   aspect-ratio: 3 / 4;
 }
 
+.puzzle-board {
+  container-type: inline-size;
+}
+.puzzle-rows,
+.puzzle-row {
+  gap: clamp(2px, 0.6cqw, 8px);
+}
+.puzzle-board .tile-slot {
+  width: min(6.5cqw, 3.4rem);
+  flex: 0 0 auto;
+}
+.puzzle-board .tile-face {
+  font-size: clamp(0.6rem, 4.6cqw, 2.3rem);
+}
+@media (prefers-reduced-motion: reduce) {
+  .puzzle-board .tile-inner {
+    transition-duration: 0ms;
+    transition-delay: 0ms !important;
+  }
+}
+
 @utility tile-inner {
   position: relative;
   width: 100%;
@@ -245,8 +266,7 @@
 }
 
 @utility marquee-lights {
-  background:
-    radial-gradient(circle at center, var(--gold) 0 38%, transparent 42%) repeat-x;
+  background: radial-gradient(circle at center, var(--gold) 0 38%, transparent 42%) repeat-x;
   background-size: 22px 22px;
   animation: marquee-glow 1.4s ease-in-out infinite alternate;
 }

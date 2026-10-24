@@ -1,13 +1,111 @@
+import { randomUUID } from "node:crypto";
+import { saveGameResults } from "./game-results";
+import { layoutPhrase, type Cell } from "./puzzle";
+
+function validClip(clip: LibraryClip): boolean {
+  if (
+    !clip ||
+    !clip.id ||
+    !clip.title?.trim() ||
+    clip.title.length > 100 ||
+    !clip.metadata ||
+    !clip.source
+  )
+    return false;
+  const { timeStart, timeEnd } = clip.metadata;
+  if (
+    !Number.isFinite(timeStart) ||
+    !Number.isFinite(timeEnd) ||
+    timeStart < 0 ||
+    timeEnd <= timeStart
+  )
+    return false;
+  if (clip.source.type === "youtube")
+    return "youtubeId" in clip.metadata && /^[\w-]{11}$/.test(clip.metadata.youtubeId);
+  try {
+    return ["https:", "http:"].includes(new URL(clip.source.id).protocol);
+  } catch {
+    return false;
+  }
+}
+
+export function authorizeSeat(
+  tableId: string,
+  playerId: string,
+  token: string | undefined,
+  host = false,
+): Player {
+  const player = getTable(tableId)?.players.find((p) => p.id === playerId);
+  if (!token || !player?.seatToken || player.seatToken !== token || (host && !player.isHost))
+    throw new Error("Your seat is unavailable or this action requires the host. Rejoin the table.");
+  return player;
+}
+
+export function publicState(table: GameState, viewer?: Player): GameState {
+  const result = structuredClone(table);
+  result.players.forEach((p) => {
+    delete p.seatToken;
+    p.discordId = null;
+  });
+  const clip = table.library.clips.find((c) => c.id === table.currentClipId);
+  result.boardRows = clip
+    ? layoutPhrase(clip.title).map((row, r) =>
+        row.map((cell, c) =>
+          cell.kind === "letter" &&
+          !table.revealedTitle &&
+          !table.hintRevealedPositions.includes(`${r}-${c}`)
+            ? { kind: "letter", char: "" }
+            : cell,
+        ),
+      )
+    : [];
+  if (!viewer?.isHost) {
+    result.library.playlists = [];
+    result.library.clips = result.library.clips
+      .filter((c) => c.id === table.currentClipId)
+      .map((c) => ({ ...c, title: table.revealedTitle ? c.title : "" }));
+    if (result.routine)
+      result.routine.config.playlist = result.routine.config.playlist.map(() => "");
+    if (table.phase === "playing" || table.phase === "lobby")
+      result.guesses = result.guesses.filter((g) => g.playerId === viewer?.id);
+  }
+  return result;
+}
+
+export function leaveTable(tableId: string, playerId: string): boolean {
+  const table = getTable(tableId);
+  const player = table?.players.find((p) => p.id === playerId);
+  if (!table || !player) return false;
+  table.players = table.players.filter((p) => p.id !== playerId);
+  table.guesses = table.guesses.filter((g) => g.playerId !== playerId);
+  if (player.isHost && table.players[0]) {
+    table.players[0].isHost = true;
+    // The old host knew the answers; reset before the new host starts another round.
+    resetRound(tableId);
+    addSystemMessage(tableId, `${table.players[0].name} is now the host`);
+  }
+  if (table.voteState) {
+    table.voteState.advanceVotes = table.voteState.advanceVotes.filter((id) => id !== playerId);
+    table.voteState.hintVotes = table.voteState.hintVotes.filter((id) => id !== playerId);
+    recalculateVoteThreshold(tableId);
+  }
+  addSystemMessage(tableId, `${player.name} left the table`);
+  if (!table.players.length) tables.delete(table.tableId);
+  saveTablesToDisk();
+  return true;
+}
 import type { LibraryClip, Playlist, SegmentLadder, VoteState } from "./library";
 import { migrateClipsToLibrary, resetSegmentLadder } from "./library";
 
 export type Player = {
+  lastSeenAt?: number;
   id: string;
+  seatToken?: string;
   name: string;
   score: number;
   isHost: boolean;
   lockedIn: boolean;
-  joinedMidRound: boolean;  // True if joined after round started, cleared on round reset
+  joinedMidRound: boolean; // True if joined after round started, cleared on round reset
   ready: boolean; // Client reports video loaded and ready to play
   discordId: string | null; // Discord user ID if logged in
 };
@@ -30,18 +128,13 @@ export type ChatMessage = {
   isSystem: boolean;
 };
 
-export type GamePhase =
-  | "lobby"
-  | "playing"
-  | "guessing"
-  | "judging"
-  | "reveal";
+export type GamePhase = "lobby" | "playing" | "guessing" | "judging" | "reveal";
 
 // Phase duration configuration (in milliseconds)
 export const PHASE_DURATIONS = {
-  playing: 60000,  // 60 seconds to watch clip
-  judging: 45000,  // 45 seconds for host to judge
-  reveal: 30000,   // 30 seconds to show answer
+  playing: 60000, // 60 seconds to watch clip
+  judging: 45000, // 45 seconds for host to judge
+  reveal: 30000, // 30 seconds to show answer
 } as const;
 
 export type RoutineStatus = "idle" | "running" | "paused" | "stopped";
@@ -64,7 +157,13 @@ export type RoutineRuntime = {
 };
 
 export type GameState = {
+  gameId?: string;
+  gameCompleted?: boolean;
   tableId: string;
+  roundId?: string;
+  boardRows?: Cell[][];
+  pausedAt?: number | null;
+  resumePlayback?: boolean;
   players: Player[];
   currentClipId: string | null;
   phase: GamePhase;
@@ -74,8 +173,8 @@ export type GameState = {
   clipPosition: number;
   revealedTitle: boolean;
   sessionPaused: boolean;
-  phaseStartTime: number | null;  // Timestamp when current phase started
-  phaseDeadline: number | null;   // Timestamp when phase should auto-advance (optional)
+  phaseStartTime: number | null; // Timestamp when current phase started
+  phaseDeadline: number | null; // Timestamp when phase should auto-advance (optional)
   routine: RoutineRuntime | null;
   waitingForReady: boolean; // True when waiting for all clients to report ready
   readyDeadline: number | null; // Epoch milliseconds when ready wait expires
@@ -93,11 +192,11 @@ const READY_TIMEOUT_SEC = 15; // Default timeout for ready handshake
 
 // In-memory game state (replace with a database in production)
 // File-backed Map to survive Nitro worker reloads in dev
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
-const STORAGE_DIR = join(tmpdir(), "glimpse-dev-state");
+const STORAGE_DIR = process.env["GLIMPSE_STATE_DIR"] || join(process.cwd(), ".data");
 const STORAGE_FILE = join(STORAGE_DIR, "tables.json");
 
 // Ensure storage directory exists
@@ -112,12 +211,13 @@ if (typeof process !== "undefined" && !existsSync(STORAGE_DIR)) {
 // Load tables from file on module initialization
 function loadTablesFromDisk(): Map<string, GameState> {
   if (typeof process === "undefined") return new Map();
-  
+
   try {
     if (existsSync(STORAGE_FILE)) {
       const data = readFileSync(STORAGE_FILE, "utf-8");
       const parsed = JSON.parse(data) as Array<[string, GameState]>;
-      return new Map(parsed);
+      // Old seats were authenticated by public IDs and cannot be safely resumed.
+      return new Map(parsed.filter(([, table]) => table.players.every((p) => !!p.seatToken)));
     }
   } catch (err) {
     console.warn("[Glimpse] Could not load tables from disk:", err);
@@ -129,13 +229,14 @@ function loadTablesFromDisk(): Map<string, GameState> {
 let saveTimer: NodeJS.Timeout | null = null;
 function saveTablesToDisk(): void {
   if (typeof process === "undefined") return;
-  
+
   if (saveTimer) clearTimeout(saveTimer);
-  
+
   saveTimer = setTimeout(() => {
     try {
       const data = JSON.stringify(Array.from(tables.entries()));
-      writeFileSync(STORAGE_FILE, data, "utf-8");
+      writeFileSync(STORAGE_FILE + ".tmp", data, { encoding: "utf-8", mode: 0o600 });
+      renameSync(STORAGE_FILE + ".tmp", STORAGE_FILE);
     } catch (err) {
       console.warn("[Glimpse] Could not save tables to disk:", err);
     }
@@ -144,7 +245,6 @@ function saveTablesToDisk(): void {
 
 // Initialize tables from disk or globalThis (for HMR compatibility)
 declare global {
-  // eslint-disable-next-line no-var
   var __glimpseTables: Map<string, GameState> | undefined;
 }
 
@@ -155,8 +255,13 @@ if (!globalThis.__glimpseTables) {
 
 export function createTable(): string {
   // Generate uppercase table code
-  const tableId = Math.random().toString(36).substring(2, 8).toUpperCase();
+  let tableId: string;
+  do {
+    tableId = randomUUID().replaceAll("-", "").slice(0, 6).toUpperCase();
+  } while (tables.has(tableId));
   tables.set(tableId, {
+    gameId: randomUUID(),
+    gameCompleted: false,
     tableId,
     players: [],
     currentClipId: null,
@@ -186,7 +291,7 @@ export function createTable(): string {
 
 export function getTable(tableId: string): GameState | undefined {
   // Normalize lookup to uppercase
-  return tables.get(tableId.toUpperCase());
+  return tables.get(tableId.trim().toUpperCase());
 }
 
 function addSystemMessage(tableId: string, text: string): void {
@@ -203,29 +308,37 @@ function addSystemMessage(tableId: string, text: string): void {
   };
 
   table.chat.push(message);
+  table.chat = table.chat.slice(-200);
 }
 
-export function joinTable(tableId: string, playerName: string, discordId: string | null = null): Player | null {
+export function joinTable(
+  tableId: string,
+  playerName: string,
+  discordId: string | null = null,
+): Player | null {
   const table = getTable(tableId);
   if (!table) return null;
 
+  playerName = playerName.trim();
+  if (!playerName || playerName.length > 40 || table.players.length >= 32) return null;
+
   // Check for duplicate player name (case-insensitive)
   const normalizedName = playerName.trim().toLowerCase();
-  const isDuplicate = table.players.some(
-    (p) => p.name.toLowerCase() === normalizedName
-  );
-  
-  if (isDuplicate) {
+  const isDuplicate = table.players.some((p) => p.name.toLowerCase() === normalizedName);
+
+  if (isDuplicate || (discordId && table.players.some((p) => p.discordId === discordId))) {
     // Return null to indicate duplicate name rejection
     return null;
   }
 
-  const playerId = Math.random().toString(36).substring(2, 15);
+  const playerId = randomUUID();
   const isFirstPlayer = table.players.length === 0;
   const isMidRound = table.phase !== "lobby" && table.currentClipId !== null;
-  
+
   const player: Player = {
+    lastSeenAt: Date.now(),
     id: playerId,
+    seatToken: randomUUID(),
     name: playerName,
     score: 0,
     isHost: isFirstPlayer,
@@ -236,13 +349,13 @@ export function joinTable(tableId: string, playerName: string, discordId: string
   };
 
   table.players.push(player);
-  
+
   if (isMidRound) {
     addSystemMessage(tableId, `${playerName} joined (will play next round)`);
   } else {
     addSystemMessage(tableId, `${playerName} joined the table`);
   }
-  
+
   saveTablesToDisk();
   return player;
 }
@@ -256,16 +369,31 @@ export function updateTable(tableId: string, updates: Partial<GameState>): boole
   return true;
 }
 
-export function addGuess(tableId: string, playerId: string, text: string, locked: boolean = false): boolean {
+export function addGuess(
+  tableId: string,
+  playerId: string,
+  text: string,
+  locked: boolean = false,
+): boolean {
   const table = getTable(tableId);
   if (!table) return false;
 
   const player = table.players.find((p) => p.id === playerId);
   if (!player) return false;
-  
+
+  if (
+    table.phase !== "playing" ||
+    table.sessionPaused ||
+    table.waitingForReady ||
+    player.isHost ||
+    !text.trim() ||
+    text.length > 200
+  )
+    return false;
+
   // If player is already locked in, reject (no-op false)
   if (player.lockedIn) return false;
-  
+
   // If player joined mid-round, they cannot participate in current clip
   if (player.joinedMidRound) return false;
 
@@ -292,11 +420,7 @@ export function addGuess(tableId: string, playerId: string, text: string, locked
   return true;
 }
 
-export function addChatMessage(
-  tableId: string,
-  playerId: string,
-  text: string,
-): boolean {
+export function addChatMessage(tableId: string, playerId: string, text: string): boolean {
   const table = getTable(tableId);
   if (!table) return false;
 
@@ -317,28 +441,29 @@ export function addChatMessage(
   return true;
 }
 
-export function updatePlayerScore(
-  tableId: string,
-  playerId: string,
-  score: number,
-): boolean {
+export function adjustPlayerScore(tableId: string, playerId: string, delta: number): boolean {
+  const player = getTable(tableId)?.players.find((p) => p.id === playerId);
+  if (!player || !Number.isSafeInteger(delta) || Math.abs(delta) > 10000) return false;
+  return updatePlayerScore(tableId, playerId, Math.max(0, player.score + delta));
+}
+
+export function updatePlayerScore(tableId: string, playerId: string, score: number): boolean {
   const table = getTable(tableId);
   if (!table) return false;
 
   const player = table.players.find((p) => p.id === playerId);
   if (!player) return false;
 
+  if (!Number.isSafeInteger(score) || Math.abs(score) > 1000000) return false;
+  if (table.gameCompleted) return false;
   const oldScore = player.score;
   player.score = score;
-  
+
   if (score !== oldScore) {
     const delta = score - oldScore;
-    addSystemMessage(
-      tableId,
-      `${player.name} ${delta > 0 ? "+" : ""}${delta} → ${score}`,
-    );
+    addSystemMessage(tableId, `${player.name} ${delta > 0 ? "+" : ""}${delta} → ${score}`);
   }
-  
+
   saveTablesToDisk();
   return true;
 }
@@ -347,55 +472,66 @@ export function startRound(tableId: string, clipId: string): boolean {
   const table = getTable(tableId);
   if (!table) return false;
 
+  if (table.gameCompleted || !table.library.clips.some((c) => c.id === clipId)) return false;
+  table.roundId = randomUUID();
   table.currentClipId = clipId;
   table.phase = "playing";
   table.guesses = [];
   table.clipPlaying = false; // Don't start playing until all clients ready
-  table.clipPosition = 0;
+  table.clipPosition =
+    table.library.clips.find((c) => c.id === table.currentClipId)?.metadata.timeStart ?? 0;
   table.revealedTitle = false;
   table.sessionPaused = false;
   table.waitingForReady = true; // Wait for ready handshake
   table.readyDeadline = Date.now() + READY_TIMEOUT_SEC * 1000; // Set timeout
-  
+
   // Initialize segment ladder for progressive playback
   table.segmentLadder = resetSegmentLadder();
-  
+
+  table.players.forEach((p) => {
+    p.joinedMidRound = false;
+  });
   // Initialize vote state
-  const eligibleCount = table.players.filter((p) => !p.joinedMidRound).length;
+  const eligibleCount = table.players.filter((p) => !p.isHost && !p.joinedMidRound).length;
   table.voteState = {
     advanceVotes: [],
     hintVotes: [],
-    threshold: Math.ceil(eligibleCount / 2),
+    threshold: Math.max(1, Math.floor(eligibleCount / 2) + 1),
   };
-  
+
   // Reset hint reveals for new round
   table.hintRevealedPositions = [];
-  
+
   // Set phase timing (will start counting when all players ready)
   const now = Date.now();
   table.phaseStartTime = now;
-  table.phaseDeadline = now + PHASE_DURATIONS.playing;
-  
+  table.phaseDeadline = null;
+
   // Reset all players' locked-in state, clear mid-round join flags, and reset ready
   table.players.forEach((p) => {
     p.lockedIn = false;
     p.joinedMidRound = false;
     p.ready = false;
   });
-  
+
   addSystemMessage(tableId, "Round started — waiting for all players to load...");
   saveTablesToDisk();
   return true;
 }
 
-export function setClipState(
-  tableId: string,
-  playing: boolean,
-  position: number,
-): boolean {
+export function setClipState(tableId: string, playing: boolean, position: number): boolean {
   const table = getTable(tableId);
   if (!table) return false;
 
+  if (
+    table.phase !== "playing" ||
+    table.sessionPaused ||
+    table.waitingForReady ||
+    typeof playing !== "boolean" ||
+    !Number.isFinite(position) ||
+    position < 0
+  )
+    return false;
   table.clipPlaying = playing;
   table.clipPosition = position;
   saveTablesToDisk();
@@ -406,14 +542,19 @@ export function lockGuesses(tableId: string): boolean {
   const table = getTable(tableId);
   if (!table) return false;
 
+  if (table.phase !== "playing" || table.sessionPaused) return false;
+  table.waitingForReady = false;
+  table.readyDeadline = null;
   table.phase = "judging";
   table.clipPlaying = false;
-  
+
   // Set phase timing
   const now = Date.now();
   table.phaseStartTime = now;
-  table.phaseDeadline = now + PHASE_DURATIONS.judging;
-  
+  table.phaseDeadline = null;
+  if (table.routine?.status === "running")
+    table.routine.phaseDeadline = now + table.routine.config.judgingDurationSec * 1000;
+
   // Lock all submitted guesses
   table.guesses.forEach((g) => (g.locked = true));
   table.players.forEach((p) => {
@@ -421,7 +562,7 @@ export function lockGuesses(tableId: string): boolean {
       p.lockedIn = true;
     }
   });
-  
+
   addSystemMessage(tableId, "Guesses locked — judging");
   saveTablesToDisk();
   return true;
@@ -431,14 +572,18 @@ export function revealTitle(tableId: string): boolean {
   const table = getTable(tableId);
   if (!table) return false;
 
+  if (table.phase !== "judging" || table.sessionPaused) return false;
+  table.clipPlaying = false;
   table.phase = "reveal";
   table.revealedTitle = true;
-  
+
   // Set phase timing
   const now = Date.now();
   table.phaseStartTime = now;
-  table.phaseDeadline = now + PHASE_DURATIONS.reveal;
-  
+  table.phaseDeadline = null;
+  if (table.routine?.status === "running")
+    table.routine.phaseDeadline = now + table.routine.config.revealDurationSec * 1000;
+
   addSystemMessage(tableId, "Title revealed");
   saveTablesToDisk();
   return true;
@@ -448,11 +593,18 @@ export function resetRound(tableId: string): boolean {
   const table = getTable(tableId);
   if (!table) return false;
 
+  if (table.routine) {
+    table.routine.status = "stopped";
+    table.routine.phaseDeadline = null;
+  }
+  table.segmentLadder = null;
+  table.voteState = null;
   table.currentClipId = null;
   table.phase = "lobby";
   table.guesses = [];
   table.clipPlaying = false;
-  table.clipPosition = 0;
+  table.clipPosition =
+    table.library.clips.find((c) => c.id === table.currentClipId)?.metadata.timeStart ?? 0;
   table.revealedTitle = false;
   table.sessionPaused = false;
   table.phaseStartTime = null;
@@ -460,14 +612,14 @@ export function resetRound(tableId: string): boolean {
   table.waitingForReady = false;
   table.readyDeadline = null;
   table.hintRevealedPositions = [];
-  
+
   // Reset all players' locked-in state, clear mid-round flags, and reset ready
   table.players.forEach((p) => {
     p.lockedIn = false;
     p.joinedMidRound = false;
     p.ready = false;
   });
-  
+
   addSystemMessage(tableId, "Round reset — back to lobby");
   saveTablesToDisk();
   return true;
@@ -477,9 +629,13 @@ export function pauseSession(tableId: string): boolean {
   const table = getTable(tableId);
   if (!table) return false;
 
+  if (table.sessionPaused) return false;
+  if (table.routine?.status === "running") return pauseRoutine(tableId);
+  table.pausedAt = Date.now();
+  table.resumePlayback = table.clipPlaying;
   table.sessionPaused = true;
   table.clipPlaying = false;
-  
+
   addSystemMessage(tableId, "Session paused");
   saveTablesToDisk();
   return true;
@@ -489,8 +645,12 @@ export function resumeSession(tableId: string): boolean {
   const table = getTable(tableId);
   if (!table) return false;
 
+  if (!table.sessionPaused) return false;
+  if (table.routine?.status === "paused") return resumeRoutine(tableId);
+  if (table.readyDeadline && table.pausedAt) table.readyDeadline += Date.now() - table.pausedAt;
   table.sessionPaused = false;
-  
+  table.clipPlaying = !!table.resumePlayback && !table.waitingForReady;
+  table.pausedAt = null;
   addSystemMessage(tableId, "Session resumed");
   saveTablesToDisk();
   return true;
@@ -499,28 +659,27 @@ export function resumeSession(tableId: string): boolean {
 export function restartSession(tableId: string): boolean {
   const table = getTable(tableId);
   if (!table) return false;
-
-  table.currentClipId = null;
-  table.phase = "lobby";
-  table.guesses = [];
-  table.clipPlaying = false;
-  table.clipPosition = 0;
-  table.revealedTitle = false;
-  table.sessionPaused = false;
-  table.phaseStartTime = null;
-  table.phaseDeadline = null;
-  table.waitingForReady = false;
-  table.readyDeadline = null;
-  table.hintRevealedPositions = [];
-  
-  // Reset all players' locked-in state, mid-round flags, and ready state but keep scores
+  resetRound(tableId);
+  table.gameId = randomUUID();
+  table.gameCompleted = false;
   table.players.forEach((p) => {
-    p.lockedIn = false;
-    p.joinedMidRound = false;
-    p.ready = false;
+    p.score = 0;
   });
-  
-  addSystemMessage(tableId, "Session restarted");
+  saveTablesToDisk();
+  return true;
+}
+export function finishGame(tableId: string): boolean {
+  const table = getTable(tableId);
+  if (!table || !["lobby", "reveal"].includes(table.phase)) return false;
+  if (table.gameCompleted) return true;
+  table.gameId ??= randomUUID();
+  saveGameResults(table.gameId, table.tableId, table.players);
+  table.gameCompleted = true;
+  if (table.routine) {
+    table.routine.status = "stopped";
+    table.routine.phaseDeadline = null;
+  }
+  addSystemMessage(tableId, "Game finished — Discord player scores saved to leaderboard");
   saveTablesToDisk();
   return true;
 }
@@ -529,21 +688,19 @@ export function restartSession(tableId: string): boolean {
 // READY HANDSHAKE - Multiplayer sync before playback
 // ============================================================================
 
-export function reportPlayerReady(
-  tableId: string,
-  playerId: string
-): boolean {
+export function reportPlayerReady(tableId: string, playerId: string): boolean {
   const table = getTable(tableId);
   if (!table) return false;
 
   const player = table.players.find((p) => p.id === playerId);
   if (!player) return false;
 
+  if (table.phase !== "playing" || player.joinedMidRound) return false;
   player.ready = true;
 
   // Check if all participating players are now ready (exclude mid-round joiners)
   const participatingPlayers = table.players.filter((p) => !p.joinedMidRound);
-  if (table.waitingForReady && participatingPlayers.every((p) => p.ready)) {
+  if (!table.sessionPaused && table.waitingForReady && participatingPlayers.every((p) => p.ready)) {
     // All participating players ready - start playback!
     table.waitingForReady = false;
     table.readyDeadline = null; // Clear timeout
@@ -551,8 +708,7 @@ export function reportPlayerReady(
 
     // If running a routine, set the phase deadline now
     if (table.routine && table.routine.status === "running") {
-      table.routine.phaseDeadline =
-        Date.now() + table.routine.config.guessDurationSec * 1000;
+      table.routine.phaseDeadline = Date.now() + table.routine.config.guessDurationSec * 1000;
     }
 
     addSystemMessage(tableId, "All players ready — clip playing!");
@@ -565,29 +721,28 @@ export function reportPlayerReady(
 export function forceStartAnyway(tableId: string): boolean {
   const table = getTable(tableId);
   if (!table) return false;
-  
+
   // Only works if actually waiting for ready
-  if (!table.waitingForReady) return false;
-  
+  if (!table.waitingForReady || table.sessionPaused || table.phase !== "playing") return false;
+
   // Force start even if not all players ready
   table.waitingForReady = false;
   table.readyDeadline = null;
   table.clipPlaying = true;
-  
+
   // If running a routine, set the phase deadline now
   if (table.routine && table.routine.status === "running") {
-    table.routine.phaseDeadline =
-      Date.now() + table.routine.config.guessDurationSec * 1000;
+    table.routine.phaseDeadline = Date.now() + table.routine.config.guessDurationSec * 1000;
   }
-  
+
   // Count only participating players for accurate ready status
   const participatingPlayers = table.players.filter((p) => !p.joinedMidRound);
   const readyCount = participatingPlayers.filter((p) => p.ready).length;
   addSystemMessage(
     tableId,
-    `Host started anyway (${readyCount}/${participatingPlayers.length} ready)`
+    `Host started anyway (${readyCount}/${participatingPlayers.length} ready)`,
   );
-  
+
   saveTablesToDisk();
   return true;
 }
@@ -596,15 +751,24 @@ export function forceStartAnyway(tableId: string): boolean {
 // ROUTINE ORCHESTRATION
 // ============================================================================
 
-export function configureRoutine(
-  tableId: string,
-  config: RoutineConfig
-): boolean {
+export function configureRoutine(tableId: string, config: RoutineConfig): boolean {
   const table = getTable(tableId);
   if (!table) return false;
 
+  if (
+    !config ||
+    !Array.isArray(config.playlist) ||
+    !config.playlist.length ||
+    config.playlist.length > 100 ||
+    config.playlist.some((id) => !table.library.clips.some((c) => c.id === id)) ||
+    [config.guessDurationSec, config.judgingDurationSec, config.revealDurationSec].some(
+      (n) => !Number.isFinite(n) || n < 1 || n > 600,
+    ) ||
+    typeof config.autoAdvance !== "boolean"
+  )
+    return false;
   // Only allow configuration when idle or not running
-  if (table.routine?.status === "running") {
+  if (table.routine?.status === "running" || table.routine?.status === "paused") {
     return false;
   }
 
@@ -619,7 +783,7 @@ export function configureRoutine(
 
   addSystemMessage(
     tableId,
-    `Routine configured: ${config.playlist.length} clips, ${config.guessDurationSec}s guess time`
+    `Routine configured: ${config.playlist.length} clips, ${config.guessDurationSec}s guess time`,
   );
   saveTablesToDisk();
   return true;
@@ -629,10 +793,11 @@ export function startRoutine(tableId: string): boolean {
   const table = getTable(tableId);
   if (!table) return false;
 
-  if (!table.routine || table.routine.config.playlist.length === 0) {
+  if (table.gameCompleted || !table.routine || table.routine.config.playlist.length === 0) {
     return false;
   }
 
+  if (table.routine.status === "running" || table.routine.status === "paused") return false;
   // Reset to beginning if idle/stopped
   if (table.routine.status === "idle" || table.routine.status === "stopped") {
     table.routine.currentIndex = 0;
@@ -640,23 +805,27 @@ export function startRoutine(tableId: string): boolean {
 
   // Validate that clips in playlist still exist in library
   const validClipIds = table.routine.config.playlist.filter((clipId) =>
-    table.library.clips.some((clip) => clip.id === clipId)
+    table.library.clips.some((clip) => clip.id === clipId),
   );
-  
+
   if (validClipIds.length === 0) {
     addSystemMessage(tableId, "Cannot start routine: all clips have been deleted from library");
     return false;
   }
-  
+
   // Update playlist to only include valid clips
   if (validClipIds.length < table.routine.config.playlist.length) {
-    table.routine.config.playlist = validClipIds;
     const removedCount = table.routine.config.playlist.length - validClipIds.length;
-    addSystemMessage(tableId, `${removedCount} clip(s) were removed from playlist (deleted from library)`);
+    table.routine.config.playlist = validClipIds;
+    addSystemMessage(
+      tableId,
+      `${removedCount} clip(s) were removed from playlist (deleted from library)`,
+    );
   }
 
   table.routine.status = "running";
 
+  table.roundId = randomUUID();
   // Start first clip but wait for ready handshake
   const clipId = table.routine.config.playlist[table.routine.currentIndex];
   if (!clipId) return false;
@@ -665,26 +834,31 @@ export function startRoutine(tableId: string): boolean {
   table.phase = "playing";
   table.guesses = [];
   table.clipPlaying = false; // Don't start playing until all clients ready
-  table.clipPosition = 0;
+  table.clipPosition =
+    table.library.clips.find((c) => c.id === table.currentClipId)?.metadata.timeStart ?? 0;
   table.revealedTitle = false;
   table.hintRevealedPositions = [];
   table.sessionPaused = false;
   table.waitingForReady = true; // Wait for ready handshake
   table.readyDeadline = Date.now() + READY_TIMEOUT_SEC * 1000; // Set timeout
-  
+
   // Initialize segment ladder for progressive playback
   table.segmentLadder = resetSegmentLadder();
-  
+
+  table.players.forEach((p) => {
+    p.joinedMidRound = false;
+  });
   // Initialize vote state
-  const eligibleCount = table.players.filter((p) => !p.joinedMidRound).length;
+  const eligibleCount = table.players.filter((p) => !p.isHost && !p.joinedMidRound).length;
   table.voteState = {
     advanceVotes: [],
     hintVotes: [],
-    threshold: Math.ceil(eligibleCount / 2),
+    threshold: Math.max(1, Math.floor(eligibleCount / 2) + 1),
   };
-  
+
   table.players.forEach((p) => {
     p.lockedIn = false;
+    p.joinedMidRound = false;
     p.ready = false;
   });
 
@@ -694,7 +868,7 @@ export function startRoutine(tableId: string): boolean {
 
   addSystemMessage(
     tableId,
-    `Routine started: Round ${table.routine.currentIndex + 1}/${table.routine.config.playlist.length} — waiting for all players to load...`
+    `Routine started: Round ${table.routine.currentIndex + 1}/${table.routine.config.playlist.length} — waiting for all players to load...`,
   );
   saveTablesToDisk();
   return true;
@@ -714,6 +888,8 @@ export function pauseRoutine(tableId: string): boolean {
     }
   }
 
+  table.pausedAt = Date.now();
+  table.resumePlayback = table.clipPlaying;
   table.routine.status = "paused";
   table.routine.phaseDeadline = null;
   table.clipPlaying = false;
@@ -736,14 +912,17 @@ export function resumeRoutine(tableId: string): boolean {
     table.routine.pausedRemainingMs = null;
   }
 
+  if (table.readyDeadline && table.pausedAt) table.readyDeadline += Date.now() - table.pausedAt;
   table.routine.status = "running";
   table.sessionPaused = false;
 
   // Resume clip if in playing phase
   if (table.phase === "playing") {
-    table.clipPlaying = true;
+    table.clipPlaying = !!table.resumePlayback && !table.waitingForReady;
   }
 
+  if (table.waitingForReady && table.players.filter((p) => !p.joinedMidRound).every((p) => p.ready))
+    forceStartAnyway(tableId);
   addSystemMessage(tableId, "Routine resumed");
   saveTablesToDisk();
   return true;
@@ -760,6 +939,7 @@ export function stopRoutine(tableId: string): boolean {
   table.routine.pausedRemainingMs = null;
   table.routine.currentIndex = 0;
 
+  resetRound(tableId);
   // Return to idle state
   table.phase = "lobby";
   table.clipPlaying = false;
@@ -768,6 +948,7 @@ export function stopRoutine(tableId: string): boolean {
   table.readyDeadline = null;
   table.players.forEach((p) => {
     p.lockedIn = false;
+    p.joinedMidRound = false;
     p.ready = false;
   });
 
@@ -782,8 +963,10 @@ export function skipPhase(tableId: string): boolean {
 
   if (table.routine?.status !== "running") return false;
 
+  table.waitingForReady = false;
+  table.readyDeadline = null;
   // Force immediate phase advance by setting deadline to now
-  table.routine.phaseDeadline = Date.now();
+  advanceRoutinePhase(table, true);
 
   addSystemMessage(tableId, "Phase skipped");
   saveTablesToDisk();
@@ -795,11 +978,10 @@ export function skipPhase(tableId: string): boolean {
 // ============================================================================
 
 declare global {
-  // eslint-disable-next-line no-var
   var __glimpseOrchestrationInterval: NodeJS.Timeout | undefined;
 }
 
-function advanceRoutinePhase(table: GameState): void {
+function advanceRoutinePhase(table: GameState, forceNext = false): void {
   if (!table.routine || table.routine.status !== "running") return;
 
   const { phase } = table;
@@ -819,8 +1001,7 @@ function advanceRoutinePhase(table: GameState): void {
         }
       });
 
-      table.routine.phaseDeadline =
-        Date.now() + config.judgingDurationSec * 1000;
+      table.routine.phaseDeadline = Date.now() + config.judgingDurationSec * 1000;
 
       addSystemMessage(table.tableId, "Guesses locked — judging");
       saveTablesToDisk();
@@ -832,8 +1013,7 @@ function advanceRoutinePhase(table: GameState): void {
       table.phase = "reveal";
       table.revealedTitle = true;
 
-      table.routine.phaseDeadline =
-        Date.now() + config.revealDurationSec * 1000;
+      table.routine.phaseDeadline = Date.now() + config.revealDurationSec * 1000;
 
       addSystemMessage(table.tableId, "Title revealed");
       saveTablesToDisk();
@@ -844,7 +1024,7 @@ function advanceRoutinePhase(table: GameState): void {
       // Check if there are more clips
       const nextIndex = currentIndex + 1;
 
-      if (nextIndex < config.playlist.length && config.autoAdvance) {
+      if (nextIndex < config.playlist.length && (config.autoAdvance || forceNext)) {
         // Advance to next clip
         table.routine.currentIndex = nextIndex;
         const nextClipId = config.playlist[nextIndex];
@@ -857,27 +1037,33 @@ function advanceRoutinePhase(table: GameState): void {
         }
 
         // Start next clip but wait for ready handshake
+        table.roundId = randomUUID();
         table.currentClipId = nextClipId;
         table.phase = "playing";
         table.guesses = [];
         table.clipPlaying = false; // Don't play until all clients ready
-        table.clipPosition = 0;
+        table.clipPosition =
+          table.library.clips.find((c) => c.id === table.currentClipId)?.metadata.timeStart ?? 0;
         table.revealedTitle = false;
         table.hintRevealedPositions = [];
         table.waitingForReady = true;
         table.readyDeadline = Date.now() + READY_TIMEOUT_SEC * 1000; // Set timeout
-        
+
         // Initialize segment ladder and vote state for new clip
         table.segmentLadder = resetSegmentLadder();
-        const eligibleCount = table.players.filter((p) => !p.joinedMidRound).length;
+        table.players.forEach((p) => {
+          p.joinedMidRound = false;
+        });
+        const eligibleCount = table.players.filter((p) => !p.isHost && !p.joinedMidRound).length;
         table.voteState = {
           advanceVotes: [],
           hintVotes: [],
-          threshold: Math.ceil(eligibleCount / 2),
+          threshold: Math.max(1, Math.floor(eligibleCount / 2) + 1),
         };
-        
+
         table.players.forEach((p) => {
           p.lockedIn = false;
+          p.joinedMidRound = false;
           p.ready = false;
         });
 
@@ -886,11 +1072,16 @@ function advanceRoutinePhase(table: GameState): void {
 
         addSystemMessage(
           table.tableId,
-          `Round ${nextIndex + 1}/${config.playlist.length} — waiting for all players to load...`
+          `Round ${nextIndex + 1}/${config.playlist.length} — waiting for all players to load...`,
         );
         saveTablesToDisk();
+      } else if (nextIndex < config.playlist.length) {
+        table.routine.phaseDeadline = null;
+        addSystemMessage(table.tableId, "Ready for the next clip — host: choose Next Round");
+        saveTablesToDisk();
       } else {
-        // End of routine or autoAdvance disabled
+        // End of routine
+        resetRound(table.tableId);
         table.routine.status = "idle";
         table.phase = "lobby";
         table.routine.phaseDeadline = null;
@@ -908,9 +1099,9 @@ function advanceRoutinePhase(table: GameState): void {
 }
 
 function allEligiblePlayersLocked(table: GameState): boolean {
-  const eligiblePlayers = table.players.filter((p) => !p.joinedMidRound);
+  const eligiblePlayers = table.players.filter((p) => !p.isHost && !p.joinedMidRound);
   if (eligiblePlayers.length === 0) return false;
-  
+
   return eligiblePlayers.every((p) => p.lockedIn);
 }
 
@@ -918,29 +1109,29 @@ export function tickOrchestration(): void {
   const now = Date.now();
 
   for (const table of tables.values()) {
+    if (table.sessionPaused || table.gameCompleted) continue;
     // Handle ready timeout - force start if timeout expires
     if (table.waitingForReady && table.readyDeadline && now >= table.readyDeadline) {
       const participatingPlayers = table.players.filter((p) => !p.joinedMidRound);
       const readyCount = participatingPlayers.filter((p) => p.ready).length;
-      
+
       // Force start even if not all players ready
       table.waitingForReady = false;
       table.readyDeadline = null;
       table.clipPlaying = true;
-      
+
       // If running a routine, set the phase deadline now
       if (table.routine && table.routine.status === "running") {
-        table.routine.phaseDeadline =
-          now + table.routine.config.guessDurationSec * 1000;
+        table.routine.phaseDeadline = now + table.routine.config.guessDurationSec * 1000;
       }
-      
+
       addSystemMessage(
         table.tableId,
-        `Ready timeout — starting anyway (${readyCount}/${participatingPlayers.length} ready)`
+        `Ready timeout — starting anyway (${readyCount}/${participatingPlayers.length} ready)`,
       );
       saveTablesToDisk();
     }
-    
+
     if (!table.routine || table.routine.status !== "running") continue;
     if (!table.routine.phaseDeadline) continue;
 
@@ -959,8 +1150,11 @@ export function tickOrchestration(): void {
 }
 
 // Start global orchestration tick (HMR-safe)
-if (typeof globalThis !== "undefined" && !globalThis.__glimpseOrchestrationInterval) {
+if (globalThis.__glimpseOrchestrationInterval)
+  clearInterval(globalThis.__glimpseOrchestrationInterval);
+if (typeof globalThis !== "undefined") {
   globalThis.__glimpseOrchestrationInterval = setInterval(tickOrchestration, 250);
+  globalThis.__glimpseOrchestrationInterval.unref();
 }
 
 // ============================================================================
@@ -971,24 +1165,35 @@ export function addClipToLibrary(tableId: string, clip: LibraryClip): boolean {
   const table = getTable(tableId);
   if (!table) return false;
 
+  if (!validClip(clip)) return false;
   // Check for duplicate ID
   if (table.library.clips.some((c) => c.id === clip.id)) {
     return false;
   }
 
   table.library.clips.push(clip);
-  addSystemMessage(tableId, `Clip added: ${clip.title}`);
+  addSystemMessage(tableId, "Clip added to library");
   saveTablesToDisk();
   return true;
 }
 
-export function updateClipInLibrary(tableId: string, clipId: string, updates: Partial<LibraryClip>): boolean {
+export function updateClipInLibrary(
+  tableId: string,
+  clipId: string,
+  updates: Partial<LibraryClip>,
+): boolean {
   const table = getTable(tableId);
   if (!table) return false;
 
   const clipIndex = table.library.clips.findIndex((c) => c.id === clipId);
   if (clipIndex === -1) return false;
 
+  if (
+    table.currentClipId === clipId ||
+    !validClip({ ...table.library.clips[clipIndex]!, ...updates }) ||
+    (updates.id && updates.id !== clipId)
+  )
+    return false;
   table.library.clips[clipIndex] = {
     ...table.library.clips[clipIndex]!,
     ...updates,
@@ -1003,6 +1208,12 @@ export function removeClipFromLibrary(tableId: string, clipId: string): boolean 
   const table = getTable(tableId);
   if (!table) return false;
 
+  if (
+    table.currentClipId === clipId ||
+    ((table.routine?.status === "running" || table.routine?.status === "paused") &&
+      table.routine.config.playlist.includes(clipId))
+  )
+    return false;
   const initialLength = table.library.clips.length;
   table.library.clips = table.library.clips.filter((c) => c.id !== clipId);
 
@@ -1020,7 +1231,11 @@ export function removeClipFromLibrary(tableId: string, clipId: string): boolean 
   return true;
 }
 
-export function createPlaylist(tableId: string, name: string, clipIds: string[] = []): string | null {
+export function createPlaylist(
+  tableId: string,
+  name: string,
+  clipIds: string[] = [],
+): string | null {
   const table = getTable(tableId);
   if (!table) return null;
 
@@ -1040,7 +1255,11 @@ export function createPlaylist(tableId: string, name: string, clipIds: string[] 
   return playlistId;
 }
 
-export function updatePlaylist(tableId: string, playlistId: string, updates: Partial<Omit<Playlist, "id" | "createdAt">>): boolean {
+export function updatePlaylist(
+  tableId: string,
+  playlistId: string,
+  updates: Partial<Omit<Playlist, "id" | "createdAt">>,
+): boolean {
   const table = getTable(tableId);
   if (!table) return false;
 
@@ -1087,7 +1306,14 @@ export function initializeSegmentLadder(tableId: string): boolean {
 
 export function advanceToNextSegment(tableId: string): boolean {
   const table = getTable(tableId);
-  if (!table || !table.segmentLadder) return false;
+  if (
+    !table ||
+    !table.segmentLadder ||
+    table.phase !== "playing" ||
+    table.sessionPaused ||
+    table.waitingForReady
+  )
+    return false;
 
   const { currentSegmentIndex, segmentDurations } = table.segmentLadder;
   if (currentSegmentIndex >= segmentDurations.length - 1) {
@@ -1111,8 +1337,8 @@ export function recalculateVoteThreshold(tableId: string): boolean {
   const table = getTable(tableId);
   if (!table || !table.voteState) return false;
 
-  const eligibleCount = table.players.filter((p) => !p.joinedMidRound).length;
-  table.voteState.threshold = Math.ceil(eligibleCount / 2);
+  const eligibleCount = table.players.filter((p) => !p.isHost && !p.joinedMidRound).length;
+  table.voteState.threshold = Math.max(1, Math.floor(eligibleCount / 2) + 1);
 
   saveTablesToDisk();
   return true;
@@ -1135,8 +1361,8 @@ export function initializeVoteState(tableId: string): boolean {
   const table = getTable(tableId);
   if (!table) return false;
 
-  const eligibleCount = table.players.filter((p) => !p.joinedMidRound).length;
-  const threshold = Math.ceil(eligibleCount / 2); // Majority
+  const eligibleCount = table.players.filter((p) => !p.isHost && !p.joinedMidRound).length;
+  const threshold = Math.max(1, Math.floor(eligibleCount / 2) + 1); // Majority
 
   table.voteState = {
     advanceVotes: [],
@@ -1152,13 +1378,21 @@ export function castVote(tableId: string, playerId: string, voteType: "advance" 
   const table = getTable(tableId);
   if (!table || !table.voteState) return false;
 
+  if (
+    table.phase !== "playing" ||
+    table.sessionPaused ||
+    table.waitingForReady ||
+    !["advance", "hint"].includes(voteType)
+  )
+    return false;
   // Validate player eligibility
   const player = table.players.find((p) => p.id === playerId);
   if (!player) return false; // Player not found
-  if (player.joinedMidRound) return false; // Mid-round joiners can't vote
-  
+  if (player.isHost || player.joinedMidRound) return false; // Mid-round joiners can't vote
+
   // Prevent duplicate votes (idempotent - same vote = no-op, not error)
-  const voteArray = voteType === "advance" ? table.voteState.advanceVotes : table.voteState.hintVotes;
+  const voteArray =
+    voteType === "advance" ? table.voteState.advanceVotes : table.voteState.hintVotes;
   if (voteArray.includes(playerId)) {
     // Already voted - this is a no-op success
     return true;
@@ -1173,54 +1407,50 @@ export function castVote(tableId: string, playerId: string, voteType: "advance" 
 
   // Recalculate threshold based on current eligible players
   // (in case players joined/left since vote state was initialized)
-  const eligibleCount = table.players.filter((p) => !p.joinedMidRound).length;
-  table.voteState.threshold = Math.ceil(eligibleCount / 2);
+  const eligibleCount = table.players.filter((p) => !p.isHost && !p.joinedMidRound).length;
+  table.voteState.threshold = Math.max(1, Math.floor(eligibleCount / 2) + 1);
 
   // Check if threshold reached
   const votes = voteType === "advance" ? table.voteState.advanceVotes : table.voteState.hintVotes;
   const thresholdMet = votes.length >= table.voteState.threshold;
-  
+
   if (thresholdMet) {
     if (voteType === "advance") {
       // Auto-advance segment if possible
       const advanceSuccess = advanceToNextSegment(tableId);
       if (advanceSuccess) {
         addSystemMessage(
-          tableId, 
-          `Vote passed (${votes.length}/${table.voteState.threshold}): advancing segment`
+          tableId,
+          `Vote passed (${votes.length}/${table.voteState.threshold}): advancing segment`,
         );
       } else {
-        addSystemMessage(
-          tableId, 
-          `Vote passed but already at final segment`
-        );
+        addSystemMessage(tableId, `Vote passed but already at final segment`);
       }
       // Reset advance votes after execution (successful or not)
       table.voteState.advanceVotes = [];
     } else {
       // Reveal hint - pick unrevealed letter position(s) from current clip title
       const revealCount = 1; // Number of letters to reveal per hint vote
-      const clip = table.library.clips.find(c => c.id === table.currentClipId);
-      
+      const clip = table.library.clips.find((c) => c.id === table.currentClipId);
+
       if (clip) {
-        const { layoutPhrase } = require("./puzzle");
         const rows = layoutPhrase(clip.title);
-        
+
         // Collect all letter positions
         const letterPositions: string[] = [];
-        rows.forEach((row: any[], r: number) => {
-          row.forEach((cell: any, c: number) => {
+        rows.forEach((row: Cell[], r: number) => {
+          row.forEach((cell: Cell, c: number) => {
             if (cell.kind === "letter") {
               letterPositions.push(`${r}-${c}`);
             }
           });
         });
-        
+
         // Filter out already revealed positions
         const unrevealedPositions = letterPositions.filter(
-          pos => !table.hintRevealedPositions.includes(pos)
+          (pos) => !table.hintRevealedPositions.includes(pos),
         );
-        
+
         // Pick random positions to reveal
         const toReveal = Math.min(revealCount, unrevealedPositions.length);
         if (toReveal > 0) {
@@ -1231,24 +1461,18 @@ export function castVote(tableId: string, playerId: string, voteType: "advance" 
               table.hintRevealedPositions.push(position);
             }
           }
-          
+
           addSystemMessage(
-            tableId, 
-            `Vote passed (${votes.length}/${table.voteState.threshold}): ${toReveal} letter${toReveal > 1 ? 's' : ''} revealed!`
+            tableId,
+            `Vote passed (${votes.length}/${table.voteState.threshold}): ${toReveal} letter${toReveal > 1 ? "s" : ""} revealed!`,
           );
         } else {
-          addSystemMessage(
-            tableId, 
-            `Vote passed but all letters already revealed`
-          );
+          addSystemMessage(tableId, `Vote passed but all letters already revealed`);
         }
       } else {
-        addSystemMessage(
-          tableId, 
-          `Vote passed but no clip loaded`
-        );
+        addSystemMessage(tableId, `Vote passed but no clip loaded`);
       }
-      
+
       table.voteState.hintVotes = [];
     }
   }
@@ -1269,35 +1493,41 @@ export function resetVoteState(tableId: string): boolean {
 // Manual hint reveal (host override)
 export function revealHint(tableId: string): boolean {
   const table = getTable(tableId);
-  if (!table || !table.currentClipId) return false;
-  
+  if (
+    !table ||
+    !table.currentClipId ||
+    table.phase !== "playing" ||
+    table.sessionPaused ||
+    table.waitingForReady
+  )
+    return false;
+
   const revealCount = 1; // Number of letters to reveal
-  const clip = table.library.clips.find(c => c.id === table.currentClipId);
-  
+  const clip = table.library.clips.find((c) => c.id === table.currentClipId);
+
   if (!clip) return false;
-  
-  const { layoutPhrase } = require("./puzzle");
+
   const rows = layoutPhrase(clip.title);
-  
+
   // Collect all letter positions
   const letterPositions: string[] = [];
-  rows.forEach((row: any[], r: number) => {
-    row.forEach((cell: any, c: number) => {
+  rows.forEach((row: Cell[], r: number) => {
+    row.forEach((cell: Cell, c: number) => {
       if (cell.kind === "letter") {
         letterPositions.push(`${r}-${c}`);
       }
     });
   });
-  
+
   // Filter out already revealed positions
   const unrevealedPositions = letterPositions.filter(
-    pos => !table.hintRevealedPositions.includes(pos)
+    (pos) => !table.hintRevealedPositions.includes(pos),
   );
-  
+
   // Pick random positions to reveal
   const toReveal = Math.min(revealCount, unrevealedPositions.length);
   if (toReveal === 0) return false; // All letters already revealed
-  
+
   for (let i = 0; i < toReveal; i++) {
     const randomIndex = Math.floor(Math.random() * unrevealedPositions.length);
     const position = unrevealedPositions.splice(randomIndex, 1)[0];
@@ -1305,8 +1535,30 @@ export function revealHint(tableId: string): boolean {
       table.hintRevealedPositions.push(position);
     }
   }
-  
-  addSystemMessage(tableId, `Host revealed ${toReveal} letter${toReveal > 1 ? 's' : ''}`);
+
+  addSystemMessage(tableId, `Host revealed ${toReveal} letter${toReveal > 1 ? "s" : ""}`);
+  saveTablesToDisk();
+  return true;
+}
+
+export function claimHost(tableId: string, playerId: string): boolean {
+  const table = getTable(tableId);
+  const player = table?.players.find((p) => p.id === playerId);
+  const host = table?.players.find((p) => p.isHost);
+  if (
+    !table ||
+    !player ||
+    player.isHost ||
+    (host && Date.now() - (host.lastSeenAt ?? Date.now()) < 45000)
+  )
+    return false;
+  if (host) table.players = table.players.filter((p) => p.id !== host.id);
+  player.isHost = true;
+  resetRound(tableId);
+  addSystemMessage(
+    tableId,
+    player.name + " took over as host after the previous host disconnected",
+  );
   saveTablesToDisk();
   return true;
 }

@@ -23,17 +23,20 @@ export const Route = createFileRoute("/leaderboard")({
 function LeaderboardPage() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardStats[]>([]);
   const [authState, setAuthState] = useState<AuthState | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([
-      getLeaderboard({ data: { limit: 100 } }),
-      getAuthState({ data: undefined }),
-    ]).then(([lb, auth]) => {
-      setLeaderboard(lb);
-      setAuthState(auth);
-      setLoading(false);
-    });
+    Promise.all([getLeaderboard({ data: { limit: 100 } }), getAuthState({ data: undefined })])
+      .then(([lb, auth]) => {
+        setLeaderboard(lb);
+        setAuthState(auth);
+        setLoading(false);
+      })
+      .catch(() => {
+        setError("Could not load the leaderboard. Please refresh to retry.");
+        setLoading(false);
+      });
   }, []);
 
   if (loading) {
@@ -45,6 +48,13 @@ function LeaderboardPage() {
       </main>
     );
   }
+
+  if (error)
+    return (
+      <main className="stage-bg min-h-screen p-12 text-white" role="alert">
+        {error}
+      </main>
+    );
 
   const userRank = authState?.user
     ? leaderboard.findIndex((p) => p.discord_id === authState.user!.id) + 1
@@ -61,7 +71,7 @@ function LeaderboardPage() {
             </h1>
           </div>
           <Button
-            onClick={() => window.location.href = "/"}
+            onClick={() => (window.location.href = "/")}
             className="rounded-full border border-white/25 px-6 py-2 font-display text-lg uppercase"
           >
             Back to Game
@@ -81,7 +91,8 @@ function LeaderboardPage() {
               <div>
                 <div className="font-display text-lg text-gold">Your Rank: #{userRank}</div>
                 <div className="text-sm text-white/70">
-                  {leaderboard[userRank - 1]?.total_points ?? 0} points · {leaderboard[userRank - 1]?.games_played ?? 0} games
+                  {leaderboard[userRank - 1]?.total_points ?? 0} points ·{" "}
+                  {leaderboard[userRank - 1]?.games_played ?? 0} games
                 </div>
               </div>
             </div>
@@ -94,7 +105,7 @@ function LeaderboardPage() {
               Login with Discord to see your ranking and track your stats!
             </p>
             <Button
-              onClick={() => window.location.href = "/?discord_login=1"}
+              onClick={() => (window.location.href = "/?discord_login=1")}
               className="rounded-full bg-[#5865F2] hover:bg-[#4752C4] px-6 py-2 font-display text-white"
             >
               <svg className="inline-block w-5 h-5 mr-2" viewBox="0 0 71 55" fill="currentColor">
@@ -107,9 +118,7 @@ function LeaderboardPage() {
 
         <div className="rounded-xl border border-white/10 bg-black/25 overflow-hidden">
           <div className="bg-gold/10 border-b border-gold/30 px-6 py-3">
-            <h2 className="font-display text-xl text-gold uppercase tracking-wider">
-              Top Players
-            </h2>
+            <h2 className="font-display text-xl text-gold uppercase tracking-wider">Top Players</h2>
           </div>
 
           {leaderboard.length === 0 ? (
@@ -138,7 +147,7 @@ function LeaderboardPage() {
                         key={player.discord_id}
                         className={cn(
                           "border-b border-white/5 transition-colors hover:bg-white/5",
-                          isCurrentUser && "bg-gold/10"
+                          isCurrentUser && "bg-gold/10",
                         )}
                       >
                         <td className="px-6 py-4">
@@ -148,7 +157,7 @@ function LeaderboardPage() {
                               index === 0 && "text-[#FFD700]",
                               index === 1 && "text-[#C0C0C0]",
                               index === 2 && "text-[#CD7F32]",
-                              index > 2 && "text-white/70"
+                              index > 2 && "text-white/70",
                             )}
                           >
                             {index < 3 ? "🏆" : ""} #{index + 1}
@@ -185,9 +194,7 @@ function LeaderboardPage() {
                         <td className="px-6 py-4 text-center text-white/70">
                           {player.games_played}
                         </td>
-                        <td className="px-6 py-4 text-center text-white/70">
-                          {player.wins}
-                        </td>
+                        <td className="px-6 py-4 text-center text-white/70">{player.wins}</td>
                         <td className="px-6 py-4 text-center text-white/70">
                           {player.avg_points.toLocaleString()}
                         </td>

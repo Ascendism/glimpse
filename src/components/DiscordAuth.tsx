@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { getAuthState, initiateDiscordLogin, handleDiscordCallback, logout } from "@/lib/discord-oauth";
+import {
+  getAuthState,
+  initiateDiscordLogin,
+  handleDiscordCallback,
+  logout,
+} from "@/lib/discord-oauth";
 import type { AuthState } from "@/lib/discord-oauth";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -9,6 +14,18 @@ export function DiscordAuth({ onAuthChange }: { onAuthChange?: (auth: AuthState)
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    async function loadAuthState() {
+      try {
+        const auth = await getAuthState({ data: undefined });
+        setAuthState(auth);
+        onAuthChange?.(auth);
+      } catch (error) {
+        console.error("Failed to load auth state:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+
     loadAuthState();
 
     const urlParams = new URLSearchParams(window.location.search);
@@ -17,26 +34,17 @@ export function DiscordAuth({ onAuthChange }: { onAuthChange?: (auth: AuthState)
     if (shouldLogin) {
       initiateLogin();
     }
-  }, []);
-
-  async function loadAuthState() {
-    try {
-      const auth = await getAuthState({ data: undefined });
-      setAuthState(auth);
-      onAuthChange?.(auth);
-    } catch (error) {
-      console.error("Failed to load auth state:", error);
-    } finally {
-      setLoading(false);
-    }
-  }
+  }, [onAuthChange]);
 
   async function initiateLogin() {
     try {
       const redirectUri = `${window.location.origin}/auth/discord/callback`;
-      const { authUrl, state } = await initiateDiscordLogin({ data: { redirectUri } });
-      
-      sessionStorage.setItem("discord_oauth_state", state);
+      const { authUrl } = await initiateDiscordLogin();
+
+      sessionStorage.setItem(
+        "discord_return_to",
+        window.location.pathname + window.location.search,
+      );
       window.location.href = authUrl;
     } catch (error) {
       console.error("Failed to initiate Discord login:", error);
@@ -44,12 +52,11 @@ export function DiscordAuth({ onAuthChange }: { onAuthChange?: (auth: AuthState)
     }
   }
 
-
   async function handleLogout() {
     try {
       await logout({ data: undefined });
       document.cookie = "glimpse_session=; path=/; max-age=0";
-      
+
       const newAuthState: AuthState = {
         isAuthenticated: false,
         user: null,
