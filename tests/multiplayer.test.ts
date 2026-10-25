@@ -240,3 +240,56 @@ test("leaderboard records server scores once, supports ties, excludes host and g
   assert.equal(leaderboardDb.getPlayerStats("alice-user")!.total_points, 25);
   assert.equal(leaderboardDb.getPlayerStats("alice-user")!.games_played, 2);
 });
+
+test("library mutations validate source consistency and marker limits before saving", () => {
+  const s = setup();
+  const clip = { ...structuredClone(s.clip), id: "custom-marker-test" };
+  clip.metadata = { ...clip.metadata, duration: 6, timeStart: 0.125, timeEnd: 2.75 };
+  assert.equal(game.addClipToLibrary(s.id, clip), true);
+  assert.equal(game.addClipToLibrary(s.id, clip), false);
+  assert.equal(
+    game.updateClipInLibrary(s.id, clip.id, { metadata: { ...clip.metadata, timeEnd: 7 } }),
+    false,
+  );
+  assert.equal(
+    game.updateClipInLibrary(s.id, clip.id, { source: { type: "youtube", id: "differentID" } }),
+    false,
+  );
+  assert.equal(
+    game.getTable(s.id)!.library.clips.find((c) => c.id === clip.id)!.metadata.timeEnd,
+    2.75,
+  );
+  assert.equal(
+    game.updateClipInLibrary(s.id, clip.id, { metadata: { ...clip.metadata, timeStart: 1.25 } }),
+    true,
+  );
+  game.startRound(s.id, clip.id);
+  assert.equal(game.updateClipInLibrary(s.id, clip.id, { title: "Changed during round" }), false);
+  assert.equal(game.removeClipFromLibrary(s.id, clip.id), false);
+});
+
+test("stop and new game restore configurable idle state; deleted clips leave the routine", () => {
+  const s = setup();
+  game.configureRoutine(s.id, {
+    playlist: [s.clip.id],
+    guessDurationSec: 45,
+    judgingDurationSec: 10,
+    revealDurationSec: 8,
+    autoAdvance: true,
+  });
+  game.startRoutine(s.id);
+  game.pauseRoutine(s.id);
+  assert.equal(game.stopRoutine(s.id), true);
+  assert.equal(s.table.routine!.status, "idle");
+  assert.equal(s.table.pausedAt, null);
+  assert.equal(s.table.waitingForReady, false);
+  assert.equal(game.startRoutine(s.id), true);
+  game.stopRoutine(s.id);
+  game.finishGame(s.id);
+  game.restartSession(s.id);
+  assert.equal(s.table.routine!.status, "idle");
+  assert.equal(s.table.gameCompleted, false);
+  assert.equal(game.removeClipFromLibrary(s.id, s.clip.id), true);
+  assert.deepEqual(s.table.routine!.config.playlist, []);
+  assert.equal(game.startRoutine(s.id), false);
+});

@@ -1,3 +1,4 @@
+import { loadPersonalClips, savePersonalClip, deletePersonalClip } from "./personal-library.server";
 import { getCookie, setCookie, getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { currentDiscordId } from "./auth-session.server";
@@ -80,6 +81,11 @@ export const createTable = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const discordId = currentDiscordId();
     const tableId = createTableInMemory();
+    for (const clip of loadPersonalClips()) {
+      const existing = getTable(tableId)!.library.clips.find((c) => c.id === clip.id);
+      if (existing) updateClipInLibraryInMemory(tableId, clip.id, clip);
+      else addClipToLibraryInMemory(tableId, clip);
+    }
     const player = joinTableInMemory(tableId, data.hostName, discordId)!;
     return { tableId, player: issueSeat(player) };
   });
@@ -363,6 +369,7 @@ export const addClipToLibrary = createServerFn({ method: "POST" })
     if (!success) {
       throw new Error("Failed to add clip");
     }
+    savePersonalClip(clip);
     return { success: true };
   });
 
@@ -377,8 +384,9 @@ export const updateClipInLibrary = createServerFn({ method: "POST" })
     const normalizedTableId = tableId.toUpperCase();
     const success = updateClipInLibraryInMemory(normalizedTableId, clipId, updates);
     if (!success) {
-      throw new Error("Failed to update clip");
+      throw new Error("Failed to update clip. Stop the current round before editing its clip.");
     }
+    savePersonalClip(getTable(normalizedTableId)!.library.clips.find((c) => c.id === clipId)!);
     return { success: true };
   });
 
@@ -393,8 +401,9 @@ export const removeClipFromLibrary = createServerFn({ method: "POST" })
     const normalizedTableId = tableId.toUpperCase();
     const success = removeClipFromLibraryInMemory(normalizedTableId, clipId);
     if (!success) {
-      throw new Error("Failed to remove clip");
+      throw new Error("Failed to remove clip. Stop the current round before deleting its clip.");
     }
+    deletePersonalClip(clipId);
     return { success: true };
   });
 

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "@playwright/test";
 
 async function login(page: Page, user: string) {
@@ -78,6 +79,9 @@ test("Discord login, table invite, refresh, private guesses, scoring, leaderboar
   await expect(host.getByRole("button", { name: "Finish Game & Save Scores" })).toBeEnabled();
   await host.getByRole("button", { name: "Finish Game & Save Scores" }).click();
   await expect(host.getByRole("button", { name: "New Game" })).toBeVisible();
+  await host.getByRole("button", { name: "New Game", exact: true }).click();
+  await expect(host.getByRole("button", { name: /Glimpse Management/i })).toBeVisible();
+  await expect(host.getByRole("button", { name: "Start Routine", exact: true })).toBeEnabled();
   await player.goto("/leaderboard");
   await expect(player.getByRole("cell", { name: /Alice/ })).toBeVisible();
   await expect(player.getByRole("row").filter({ hasText: "Alice" })).toContainText("100");
@@ -112,35 +116,22 @@ test("host, player and stage play the same bounded hosted clip and pause togethe
   ]);
   const [host, player, stage] = await Promise.all(contexts.map((c) => c.newPage()));
   await host!.goto("/");
-  const bytes = await host!.evaluate(async () => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 160;
-    canvas.height = 90;
-    const ctx = canvas.getContext("2d")!;
-    const stream = canvas.captureStream(10);
-    const recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
-    const chunks: Blob[] = [];
-    recorder.ondataavailable = (e) => chunks.push(e.data);
-    const done = new Promise<Blob>((resolve) => {
-      recorder.onstop = () => resolve(new Blob(chunks));
-    });
-    recorder.start();
-    const timer = setInterval(() => {
-      ctx.fillStyle = "#5533aa";
-      ctx.fillRect(0, 0, 160, 90);
-      ctx.fillStyle = "white";
-      ctx.fillText(String(Date.now()), 5, 40);
-    }, 80);
-    await new Promise((resolve) => setTimeout(resolve, 2500));
-    recorder.stop();
-    clearInterval(timer);
-    stream.getTracks().forEach((t) => t.stop());
-    return [...new Uint8Array(await (await done).arrayBuffer())];
-  });
+  const bytes = readFileSync("tests/fixtures/clip.webm");
   for (const context of contexts)
-    await context.route("**/test-video.webm", (route) =>
-      route.fulfill({ contentType: "video/webm", body: Buffer.from(bytes) }),
-    );
+    await context.route("**/test-video.webm", (route) => {
+      const range = /bytes=(\d+)-(\d*)/.exec(route.request().headers()["range"] || "");
+      const start = Number(range?.[1] || 0);
+      const end = range?.[2] ? Number(range[2]) : bytes.length - 1;
+      return route.fulfill({
+        status: range ? 206 : 200,
+        contentType: "video/webm",
+        headers: {
+          "accept-ranges": "bytes",
+          ...(range ? { "content-range": `bytes ${start}-${end}/${bytes.length}` } : {}),
+        },
+        body: bytes.subarray(start, end + 1),
+      });
+    });
   await host!.getByPlaceholder("Your name (Host)...").fill("Video Host");
   await host!.getByRole("button", { name: "Create Table", exact: true }).click();
   await expect(host!.getByText("Operator Console")).toBeVisible();
@@ -155,7 +146,86 @@ test("host, player and stage play the same bounded hosted clip and pause togethe
     .getByPlaceholder("https://example.com/clip.mp4")
     .fill("http://localhost:3091/test-video.webm");
   await host!.getByPlaceholder("Title", { exact: true }).fill("TEST VIDEO");
-  await host!.getByRole("button", { name: "Add Hosted Video", exact: true }).click();
+  await host!.getByRole("button", { name: "Load video", exact: true }).click();
+  await expect(host!.getByRole("button", { name: "Mark start", exact: true })).toBeEnabled();
+  const scrub = host!.getByRole("slider", { name: "Video playhead", exact: true });
+  await scrub.fill("0.5");
+  await expect
+    .poll(() =>
+      host!
+        .getByTestId("clip-preview")
+        .locator("video")
+        .evaluate((v: HTMLVideoElement) => v.currentTime),
+    )
+    .toBe(0.5);
+  await host!.getByRole("button", { name: "Mark start", exact: true }).click();
+  await expect(host!.getByRole("spinbutton", { name: "Start (seconds)" })).toHaveValue("0.5");
+  await scrub.fill("2.5");
+  await host!.getByRole("button", { name: "Mark stop", exact: true }).click();
+  await expect(host!.getByRole("spinbutton", { name: "Stop (seconds)" })).toHaveValue("2.5");
+  await host!.getByRole("button", { name: "Preview selection", exact: true }).click();
+  const preview = host!.getByTestId("clip-preview").locator("video");
+  await expect
+    .poll(() => preview.evaluate((v: HTMLVideoElement) => v.paused && v.currentTime >= 2.5))
+    .toBe(true);
+  await host!.getByRole("spinbutton", { name: "Stop (seconds)" }).fill("0.2");
+  await expect(host!.getByRole("button", { name: "Save clip", exact: true })).toBeDisabled();
+  await host!.getByRole("spinbutton", { name: "Start (seconds)" }).fill("0");
+  await host!.getByRole("spinbutton", { name: "Stop (seconds)" }).fill("2.5");
+  await host!.setViewportSize({ width: 320, height: 800 });
+  expect(await host!.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await host!
+    .getByRole("region", { name: "Clip library" })
+    .screenshot({ path: "audit-clip-editor.png" });
+  await host!.setViewportSize({ width: 1280, height: 900 });
+  await host!.getByRole("button", { name: "Save clip", exact: true }).click();
+  const row = host!.getByTestId("library-clip").filter({ hasText: "TEST VIDEO" });
+  await expect(row).toBeVisible();
+  await row.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(host!.getByRole("button", { name: "Mark start", exact: true })).toBeEnabled();
+  await expect(host!.getByRole("spinbutton", { name: "Stop (seconds)" })).toHaveValue("2.5");
+  await host!.getByPlaceholder("Category", { exact: true }).fill("Browser fixture");
+  await host!.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(row).toContainText("Browser fixture");
+  // A fresh table loads this host's reusable library, without exposing it to other guests.
+  const fresh = await contexts[0]!.newPage();
+  await fresh.goto("/");
+  await fresh.getByPlaceholder("Your name (Host)...").fill("Library Host");
+  await fresh.getByRole("button", { name: "Create Table", exact: true }).click();
+  await expect(fresh.getByRole("button", { name: /TEST VIDEO.*Other/ })).toBeVisible();
+  await fresh.getByRole("button", { name: "Leave Table" }).click();
+  await login(fresh, "LibraryOwner");
+  await fresh.getByPlaceholder("Your name (Host)...").fill("Account Library Host");
+  await fresh.getByRole("button", { name: "Create Table", exact: true }).click();
+  await expect(fresh.getByRole("button", { name: /TEST VIDEO.*Other/ })).toBeVisible();
+  await fresh.close();
+  const otherContext = await browser.newContext();
+  const other = await otherContext.newPage();
+  await other.goto("/");
+  await other.getByPlaceholder("Your name (Host)...").fill("Unrelated Guest");
+  await other.getByRole("button", { name: "Create Table", exact: true }).click();
+  await expect(other.getByText("Operator Console")).toBeVisible();
+  await expect(other.getByRole("button", { name: /TEST VIDEO.*Other/ })).toHaveCount(0);
+  await other.getByRole("button", { name: "Leave Table" }).click();
+  await login(other, "LibraryOwner");
+  await other.getByPlaceholder("Your name (Host)...").fill("Account Other Device");
+  await other.getByRole("button", { name: "Create Table", exact: true }).click();
+  await expect(other.getByRole("button", { name: /TEST VIDEO.*Other/ })).toBeVisible();
+  await other.getByRole("button", { name: /Glimpse Management/i }).click();
+  other.once("dialog", (dialog) => dialog.accept());
+  await other
+    .getByTestId("library-clip")
+    .filter({ hasText: "TEST VIDEO" })
+    .getByRole("button", { name: "Delete", exact: true })
+    .click();
+  await expect(other.getByRole("button", { name: /TEST VIDEO.*Other/ })).toHaveCount(0);
+  await other.getByRole("button", { name: "Leave Table" }).click();
+  await other.getByPlaceholder("Your name (Host)...").fill("After Delete");
+  await other.getByRole("button", { name: "Create Table", exact: true }).click();
+  await expect(other.getByText("Operator Console")).toBeVisible();
+  await expect(other.getByRole("button", { name: /TEST VIDEO.*Other/ })).toHaveCount(0);
+  await otherContext.close();
+  await host!.screenshot({ path: "audit-library.png", fullPage: true });
   await host!.getByRole("button", { name: /TEST VIDEO.*Other/ }).click();
   await host!.getByRole("button", { name: "Configure Routine", exact: true }).click();
   await host!.getByRole("button", { name: "Start Routine", exact: true }).click();
@@ -215,5 +285,9 @@ test("host, player and stage play the same bounded hosted clip and pause togethe
       .toBe(0);
   await player!.screenshot({ path: "audit-player.png", fullPage: true });
   await stage!.screenshot({ path: "audit-stage.png", fullPage: true });
+  host!.once("dialog", dialog => dialog.accept());
+  await host!.getByRole("button", { name: "Stop Routine", exact: true }).click();
+  await expect(host!.getByRole("button", { name: /Glimpse Management/i })).toBeVisible();
+  await expect(host!.getByRole("button", { name: "Start Routine", exact: true })).toBeEnabled();
   await Promise.all(contexts.map((c) => c.close()));
 });

@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PuzzleBoard } from "@/components/PuzzleBoard";
+import { ClipLibrary } from "@/components/ClipLibrary";
 import { GlimpsePlayer } from "@/components/GlimpsePlayer";
 import { DiscordAuth } from "@/components/DiscordAuth";
 import { layoutPhrase, type Cell } from "@/lib/puzzle";
@@ -18,9 +19,6 @@ import {
   performHostAction,
   advanceSegment as advanceSegmentAction,
   castVote as castVoteAction,
-  addClipToLibrary as addClipToLibraryAction,
-  updateClipInLibrary as updateClipInLibraryAction,
-  removeClipFromLibrary as removeClipFromLibraryAction,
   createPlaylist as createPlaylistAction,
   updatePlaylist as updatePlaylistAction,
   removePlaylist as removePlaylistAction,
@@ -29,12 +27,7 @@ import { getLeaderboard } from "@/lib/leaderboard-actions";
 import type { LeaderboardStats } from "@/lib/db";
 import type { AuthState } from "@/lib/discord-oauth";
 import { getMatchHint } from "@/lib/match-helper";
-import {
-  createYouTubeLibraryClip,
-  isYouTubeMetadata,
-  type LibraryClip,
-  type Playlist,
-} from "@/lib/library";
+import { type Playlist } from "@/lib/library";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -370,13 +363,6 @@ function Index() {
 
   // Glimpse Management state
   const [showManagement, setShowManagement] = useState(false);
-  const [newClipYoutubeId, setNewClipYoutubeId] = useState("");
-  const [newClipTitle, setNewClipTitle] = useState("");
-  const [newClipCategory, setNewClipCategory] = useState("");
-  const [newClipTimeStart, setNewClipTimeStart] = useState("0");
-  const [newClipTimeEnd, setNewClipTimeEnd] = useState("60");
-  const [editingClipId, setEditingClipId] = useState<string | null>(null);
-  const [uploadUrl, setUploadUrl] = useState("");
   const [showPlaylistManager, setShowPlaylistManager] = useState(false);
   const [newPlaylistName, setNewPlaylistName] = useState("");
   const [editingPlaylistId, setEditingPlaylistId] = useState<string | null>(null);
@@ -429,148 +415,6 @@ function Index() {
   };
 
   // Glimpse Management: Add YouTube clip
-  const addYouTubeClip = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!tableId || !newClipYoutubeId.trim() || !newClipTitle.trim()) return;
-
-    try {
-      const clip = createYouTubeLibraryClip(
-        newClipTitle.trim(),
-        newClipYoutubeId.trim(),
-        newClipCategory.trim() || "Uncategorized",
-        "Movie", // Default type
-        parseInt(newClipTimeEnd) || 60,
-        parseInt(newClipTimeStart) || 0,
-        parseInt(newClipTimeEnd) || 60,
-      );
-
-      await addClipToLibraryAction({ data: { playerId: playerId!, tableId, clip } });
-
-      // Reset form
-      setNewClipYoutubeId("");
-      setNewClipTitle("");
-      setNewClipCategory("");
-      setNewClipTimeStart("0");
-      setNewClipTimeEnd("60");
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Failed to add clip:");
-    }
-  };
-
-  // Edit clip
-  const startEditClip = (clip: LibraryClip) => {
-    setEditingClipId(clip.id);
-    setNewClipTitle(clip.title);
-    setNewClipCategory(clip.category);
-    if (isYouTubeMetadata(clip.metadata)) {
-      setNewClipYoutubeId(clip.metadata.youtubeId);
-      setNewClipTimeStart(clip.metadata.timeStart.toString());
-      setNewClipTimeEnd(clip.metadata.timeEnd.toString());
-    }
-  };
-
-  const saveEditClip = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!tableId || !editingClipId || !newClipTitle.trim()) return;
-
-    try {
-      const clip = gameState?.library.clips.find((c) => c.id === editingClipId);
-      if (!clip) return;
-
-      const updates: Partial<LibraryClip> = {
-        title: newClipTitle.trim(),
-        category: newClipCategory.trim() || "Uncategorized",
-      };
-
-      if (isYouTubeMetadata(clip.metadata)) {
-        updates.metadata = {
-          ...clip.metadata,
-          timeStart: parseInt(newClipTimeStart) || 0,
-          timeEnd: parseInt(newClipTimeEnd) || 60,
-        };
-      }
-
-      await updateClipInLibraryAction({
-        data: { playerId: playerId!, tableId, clipId: editingClipId, updates },
-      });
-
-      // Reset form
-      setEditingClipId(null);
-      setNewClipYoutubeId("");
-      setNewClipTitle("");
-      setNewClipCategory("");
-      setNewClipTimeStart("0");
-      setNewClipTimeEnd("60");
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Failed to update clip:");
-    }
-  };
-
-  const cancelEditClip = () => {
-    setEditingClipId(null);
-    setNewClipYoutubeId("");
-    setNewClipTitle("");
-    setNewClipCategory("");
-    setNewClipTimeStart("0");
-    setNewClipTimeEnd("60");
-  };
-
-  // Delete clip
-  const deleteClip = async (clipId: string) => {
-    if (!tableId) return;
-    if (!confirm("Delete this clip? It will be removed from all playlists.")) return;
-
-    try {
-      await removeClipFromLibraryAction({ data: { playerId: playerId!, tableId, clipId } });
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Failed to delete clip:");
-    }
-  };
-
-  // Upload local file
-  const addUploadClip = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!tableId || !uploadUrl || !newClipTitle.trim()) return;
-
-    try {
-      // Create object URL for local playback
-      const fileUrl = new URL(uploadUrl).href;
-
-      // Get video duration (rough estimate or user input)
-      const duration = parseInt(newClipTimeEnd) || 60;
-
-      const clip: LibraryClip = {
-        id: `clip_${Math.random().toString(36).substring(2, 15)}`,
-        title: newClipTitle.trim(),
-        category: newClipCategory.trim() || "Uncategorized",
-        type: "Other",
-        source: {
-          type: "url",
-          id: fileUrl,
-        },
-        metadata: {
-          url: fileUrl,
-          duration,
-          timeStart: parseInt(newClipTimeStart) || 0,
-          timeEnd: duration,
-        },
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-
-      await addClipToLibraryAction({ data: { playerId: playerId!, tableId, clip } });
-
-      // Reset form
-      setUploadUrl("");
-      setNewClipTitle("");
-      setNewClipCategory("");
-      setNewClipTimeStart("0");
-      setNewClipTimeEnd("60");
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Failed to add upload:");
-    }
-  };
-
   // Playlist management
   const createNewPlaylist = async () => {
     if (!tableId || !newPlaylistName.trim()) return;
@@ -1416,192 +1260,21 @@ function Index() {
                       {showManagement ? "▼" : "▶"} Glimpse Management
                     </button>
 
-                    {showManagement && (
-                      <div className="space-y-3 rounded-lg border border-gold/20 bg-black/20 p-3">
-                        <h4 className="text-sm font-display uppercase tracking-wider text-gold">
-                          {editingClipId ? "Edit Clip" : "Add Clip"}
-                        </h4>
-
-                        {/* YouTube Clip Form */}
-                        <form
-                          onSubmit={editingClipId ? saveEditClip : addYouTubeClip}
-                          className="space-y-2"
-                        >
-                          <Input
-                            value={newClipTitle}
-                            onChange={(e) => setNewClipTitle(e.target.value)}
-                            placeholder="Title (e.g., THE MATRIX)"
-                            className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
-                          />
-                          {!editingClipId && (
-                            <Input
-                              value={newClipYoutubeId}
-                              onChange={(e) => setNewClipYoutubeId(e.target.value)}
-                              placeholder="YouTube ID (e.g., m8e-FF8MsqU)"
-                              className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
-                            />
-                          )}
-                          <Input
-                            value={newClipCategory}
-                            onChange={(e) => setNewClipCategory(e.target.value)}
-                            placeholder="Category (e.g., Sci-Fi Action)"
-                            className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
-                          />
-                          <div className="grid grid-cols-2 gap-2">
-                            <div>
-                              <label className="text-xs text-white/50">Start (s)</label>
-                              <Input
-                                type="number"
-                                value={newClipTimeStart}
-                                onChange={(e) => setNewClipTimeStart(e.target.value)}
-                                placeholder="0"
-                                className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-xs text-white/50">End (s)</label>
-                              <Input
-                                type="number"
-                                value={newClipTimeEnd}
-                                onChange={(e) => setNewClipTimeEnd(e.target.value)}
-                                placeholder="60"
-                                className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
-                              />
-                            </div>
-                          </div>
-                          <div className="flex gap-2">
-                            <Button
-                              type="submit"
-                              className="flex-1 rounded-full bg-gold/20 hover:bg-gold/30 text-gold font-display text-sm"
-                            >
-                              {editingClipId ? "Save" : "Add YouTube"}
-                            </Button>
-                            {editingClipId && (
-                              <Button
-                                type="button"
-                                onClick={cancelEditClip}
-                                className="rounded-full bg-white/10 hover:bg-white/20 text-white/60 font-display text-sm px-4"
-                              >
-                                Cancel
-                              </Button>
-                            )}
-                          </div>
-                        </form>
-
-                        {/* Upload Form */}
-                        {!editingClipId && (
-                          <>
-                            <div className="border-t border-white/10 pt-3">
-                              <h5 className="text-xs font-display uppercase tracking-wider text-gold/80 mb-2">
-                                Or Add Hosted Video
-                              </h5>
-                              <div className="mb-2 rounded border border-yellow-500/30 bg-yellow-500/10 px-2 py-1.5">
-                                <p className="text-xs text-yellow-300/90">
-                                  Use a public HTTPS video URL that every player can open.
-                                </p>
-                              </div>
-                              <form onSubmit={addUploadClip} className="space-y-2">
-                                <Input
-                                  type="url"
-                                  placeholder="https://example.com/clip.mp4"
-                                  value={uploadUrl}
-                                  onChange={(e) => setUploadUrl(e.target.value)}
-                                  className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm text-white/70"
-                                />
-                                <Input
-                                  value={newClipTitle}
-                                  onChange={(e) => setNewClipTitle(e.target.value)}
-                                  placeholder="Title"
-                                  className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
-                                />
-                                <Input
-                                  value={newClipCategory}
-                                  onChange={(e) => setNewClipCategory(e.target.value)}
-                                  placeholder="Category"
-                                  className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
-                                />
-                                <div className="grid grid-cols-2 gap-2">
-                                  <div>
-                                    <label className="text-xs text-white/50">Start (s)</label>
-                                    <Input
-                                      type="number"
-                                      value={newClipTimeStart}
-                                      onChange={(e) => setNewClipTimeStart(e.target.value)}
-                                      placeholder="0"
-                                      className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="text-xs text-white/50">Duration (s)</label>
-                                    <Input
-                                      type="number"
-                                      value={newClipTimeEnd}
-                                      onChange={(e) => setNewClipTimeEnd(e.target.value)}
-                                      placeholder="60"
-                                      className="rounded border-white/15 bg-white/5 px-2 py-1 text-sm"
-                                    />
-                                  </div>
-                                </div>
-                                <Button
-                                  type="submit"
-                                  disabled={!uploadUrl}
-                                  className="w-full rounded-full bg-gold/20 hover:bg-gold/30 text-gold font-display text-sm disabled:opacity-50"
-                                >
-                                  Add Hosted Video
-                                </Button>
-                              </form>
-                            </div>
-
-                            <div className="border-t border-white/10 pt-3">
-                              <h5 className="text-xs font-display uppercase tracking-wider text-gold/80 mb-2">
-                                Library ({gameState.library.clips.length} clips)
-                              </h5>
-                              <div className="space-y-1 max-h-40 overflow-y-auto">
-                                {gameState.library.clips.length === 0 ? (
-                                  <div className="rounded border border-white/10 bg-white/5 px-3 py-6 text-center">
-                                    <p className="text-xs text-white/40 mb-1">
-                                      No clips in library yet
-                                    </p>
-                                    <p className="text-xs text-white/30">
-                                      Add a YouTube URL or hosted video above
-                                    </p>
-                                  </div>
-                                ) : (
-                                  gameState.library.clips.map((clip) => (
-                                    <div
-                                      key={clip.id}
-                                      className="flex items-center justify-between rounded border border-white/10 bg-white/5 px-2 py-1.5 text-xs"
-                                    >
-                                      <div className="flex-1 min-w-0">
-                                        <div className="font-semibold text-gold truncate">
-                                          {clip.title}
-                                        </div>
-                                        <div className="text-white/40 truncate">
-                                          {clip.category}
-                                        </div>
-                                      </div>
-                                      <div className="flex gap-1 ml-2">
-                                        <button
-                                          onClick={() => startEditClip(clip)}
-                                          className="rounded bg-gold/20 px-2 py-1 text-gold hover:bg-gold/30"
-                                        >
-                                          Edit
-                                        </button>
-                                        <button
-                                          onClick={() => deleteClip(clip.id)}
-                                          className="rounded bg-red-500/20 px-2 py-1 text-red-300 hover:bg-red-500/30"
-                                        >
-                                          Del
-                                        </button>
-                                      </div>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-                            </div>
-                          </>
-                        )}
-                      </div>
+                    {showManagement && tableId && playerId && (
+                      <ClipLibrary
+                        tableId={tableId}
+                        playerId={playerId}
+                        clips={gameState.library.clips}
+                        refresh={async () => {
+                          const res = await fetchGameStateAction({ data: { tableId, playerId } });
+                          setGameState(res.table);
+                          setSelectedPlaylist((ids) =>
+                            ids.filter((id) =>
+                              res.table.library.clips.some((clip) => clip.id === id),
+                            ),
+                          );
+                        }}
+                      />
                     )}
 
                     <div className="space-y-2">
@@ -1868,6 +1541,7 @@ function Index() {
                 {gameState?.routine && gameState.routine.status === "idle" && (
                   <Button
                     onClick={startRoutine}
+                    disabled={gameState.gameCompleted || !gameState.routine.config.playlist.length}
                     className="w-full rounded-full bg-gradient-to-b from-gold to-gold-deep"
                   >
                     Start Routine

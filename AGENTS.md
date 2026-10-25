@@ -74,7 +74,8 @@ Visit `http://localhost:3000` → Create Table → Share code → Play!
 
 ## Extending
 
-- **Add clips**: Edit `GLIMPSE_CLIPS` in `src/lib/puzzle.ts`
+- **Add clips**: Host console → Glimpse Management; `ClipLibrary.tsx` previews media and saves playhead start/stop markers. Built-in examples are seeded by `migrateClipsToLibrary` in `src/lib/library.ts`.
+- **Reusable libraries**: `personal-library.server.ts` stores custom clips in SQLite by Discord account or private guest cookie, imports them into new tables, and claims guest clips after login.
 - **Persistence**: Replace in-memory `Map` in `game-state.ts` with a database
 - **Real-time**: Replace polling with WebSocket/SSE for lower latency
 - **Close Enough matching**: Add fuzzy string matching in host judging UI

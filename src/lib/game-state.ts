@@ -1,29 +1,42 @@
 import { randomUUID } from "node:crypto";
 import { saveGameResults } from "./game-results";
 import { layoutPhrase, type Cell } from "./puzzle";
+import { validClipRange } from "./clip-source";
 
 function validClip(clip: LibraryClip): boolean {
   if (
     !clip ||
+    typeof clip.id !== "string" ||
     !clip.id ||
-    !clip.title?.trim() ||
+    clip.id.length > 100 ||
+    typeof clip.title !== "string" ||
+    !clip.title.trim() ||
     clip.title.length > 100 ||
+    typeof clip.category !== "string" ||
+    clip.category.length > 100 ||
+    !["Movie", "TV Show", "Song", "Other"].includes(clip.type) ||
     !clip.metadata ||
     !clip.source
   )
     return false;
-  const { timeStart, timeEnd } = clip.metadata;
-  if (
-    !Number.isFinite(timeStart) ||
-    !Number.isFinite(timeEnd) ||
-    timeStart < 0 ||
-    timeEnd <= timeStart
-  )
-    return false;
+  const { timeStart, timeEnd, duration } = clip.metadata;
+  if (!validClipRange(timeStart, timeEnd, duration)) return false;
   if (clip.source.type === "youtube")
-    return "youtubeId" in clip.metadata && /^[\w-]{11}$/.test(clip.metadata.youtubeId);
+    return (
+      "youtubeId" in clip.metadata &&
+      /^[\w-]{11}$/.test(clip.metadata.youtubeId) &&
+      clip.source.id === clip.metadata.youtubeId
+    );
   try {
-    return ["https:", "http:"].includes(new URL(clip.source.id).protocol);
+    const url = new URL(clip.source.id);
+    return (
+      clip.source.type === "url" &&
+      "url" in clip.metadata &&
+      clip.metadata.url === clip.source.id &&
+      ["https:", "http:"].includes(url.protocol) &&
+      !url.username &&
+      !url.password
+    );
   } catch {
     return false;
   }
@@ -594,8 +607,10 @@ export function resetRound(tableId: string): boolean {
   if (!table) return false;
 
   if (table.routine) {
-    table.routine.status = "stopped";
+    table.routine.status = "idle";
     table.routine.phaseDeadline = null;
+    table.routine.pausedRemainingMs = null;
+    table.routine.currentIndex = 0;
   }
   table.segmentLadder = null;
   table.voteState = null;
@@ -607,6 +622,8 @@ export function resetRound(tableId: string): boolean {
     table.library.clips.find((c) => c.id === table.currentClipId)?.metadata.timeStart ?? 0;
   table.revealedTitle = false;
   table.sessionPaused = false;
+  table.pausedAt = null;
+  table.resumePlayback = false;
   table.phaseStartTime = null;
   table.phaseDeadline = null;
   table.waitingForReady = false;
@@ -1225,6 +1242,9 @@ export function removeClipFromLibrary(tableId: string, clipId: string): boolean 
   table.library.playlists.forEach((playlist) => {
     playlist.clipIds = playlist.clipIds.filter((id) => id !== clipId);
   });
+  if (table.routine) {
+    table.routine.config.playlist = table.routine.config.playlist.filter((id) => id !== clipId);
+  }
 
   addSystemMessage(tableId, `Clip removed from library`);
   saveTablesToDisk();
