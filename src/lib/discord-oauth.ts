@@ -1,3 +1,6 @@
+import { randomBytes } from "node:crypto";
+import { getCookie, setCookie, deleteCookie, getRequest } from "@tanstack/react-start/server";
+import { z } from "zod";
 import { createServerFn } from "@tanstack/react-start";
 import { userDb, sessionDb } from "./db";
 
@@ -18,7 +21,7 @@ export type AuthState = {
 };
 
 function getDiscordOAuthURL(redirectUri: string, state: string): string {
-  const clientId = process.env.DISCORD_CLIENT_ID;
+  const clientId = process.env["DISCORD_CLIENT_ID"];
   if (!clientId) {
     throw new Error("DISCORD_CLIENT_ID not configured");
   }
@@ -34,15 +37,18 @@ function getDiscordOAuthURL(redirectUri: string, state: string): string {
   return `https://discord.com/oauth2/authorize?${params.toString()}`;
 }
 
-async function exchangeCodeForToken(code: string, redirectUri: string): Promise<{
+async function exchangeCodeForToken(
+  code: string,
+  redirectUri: string,
+): Promise<{
   access_token: string;
   token_type: string;
   expires_in: number;
   refresh_token: string;
   scope: string;
 }> {
-  const clientId = process.env.DISCORD_CLIENT_ID;
-  const clientSecret = process.env.DISCORD_CLIENT_SECRET;
+  const clientId = process.env["DISCORD_CLIENT_ID"];
+  const clientSecret = process.env["DISCORD_CLIENT_SECRET"];
 
   if (!clientId || !clientSecret) {
     throw new Error("Discord OAuth credentials not configured");
@@ -84,9 +90,9 @@ async function fetchDiscordUser(accessToken: string): Promise<DiscordUser> {
   return response.json();
 }
 
-export const getAuthState = createServerFn({ method: "GET" })
-  .handler(async ({ request }): Promise<AuthState> => {
-    const sessionId = getSessionIdFromRequest(request);
+export const getAuthState = createServerFn({ method: "GET" }).handler(
+  async (): Promise<AuthState> => {
+    const sessionId = getCookie("glimpse_session");
     if (!sessionId) {
       return { isAuthenticated: false, user: null, sessionId: null };
     }
@@ -109,76 +115,55 @@ export const getAuthState = createServerFn({ method: "GET" })
         discriminator: user.discriminator ?? "0",
         avatar: user.avatar,
       },
-      sessionId,
+      sessionId: null,
     };
-  });
+  },
+);
 
-export const initiateDiscordLogin = createServerFn({ method: "POST" })
-  .validator((data: { redirectUri?: string }) => data)
-  .handler(async ({ data }) => {
-    // Default to port 8080 for playtesting compatibility
-    const redirectUri = data.redirectUri || 
-      process.env.DISCORD_REDIRECT_URI || 
-      "http://localhost:8080/auth/discord/callback";
-    
-    const state = generateRandomState();
-    const authUrl = getDiscordOAuthURL(redirectUri, state);
-    return { authUrl, state };
-  });
+function cookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: new URL(getRequest().url).protocol === "https:",
+    path: "/",
+  };
+}
 
+function callbackUri() {
+  return (
+    process.env["DISCORD_REDIRECT_URI"] || new URL("/auth/discord/callback", getRequest().url).href
+  );
+}
+export const initiateDiscordLogin = createServerFn({ method: "POST" }).handler(async () => {
+  const state = randomBytes(32).toString("hex");
+  const authUrl = getDiscordOAuthURL(callbackUri(), state);
+  setCookie("glimpse_oauth_state", state, { ...cookieOptions(), maxAge: 600 });
+  return { authUrl };
+});
 export const handleDiscordCallback = createServerFn({ method: "POST" })
-  .validator((data: { code: string; redirectUri: string }) => data)
-  .handler(async ({ data }): Promise<{ sessionId: string; user: DiscordUser }> => {
-    const { code, redirectUri } = data;
-
-    const tokenData = await exchangeCodeForToken(code, redirectUri);
+  .validator((data: unknown) =>
+    z.object({ code: z.string().min(1).max(2048), state: z.string().min(1).max(128) }).parse(data),
+  )
+  .handler(async ({ data }) => {
+    const expected = getCookie("glimpse_oauth_state");
+    deleteCookie("glimpse_oauth_state", { path: "/" });
+    if (!expected || data.state !== expected)
+      throw new Error("Discord login expired or state did not match. Please try again.");
+    const tokenData = await exchangeCodeForToken(data.code, callbackUri());
     const discordUser = await fetchDiscordUser(tokenData.access_token);
-
     const user = userDb.upsert({
       discord_id: discordUser.id,
       username: discordUser.username,
       discriminator: discordUser.discriminator,
       avatar: discordUser.avatar,
     });
-
     const session = sessionDb.create(user.discord_id);
-
-    return {
-      sessionId: session.session_id,
-      user: {
-        id: user.discord_id,
-        username: user.username,
-        discriminator: user.discriminator ?? "0",
-        avatar: user.avatar,
-      },
-    };
-  });
-
-export const logout = createServerFn({ method: "POST" })
-  .handler(async ({ request }) => {
-    const sessionId = getSessionIdFromRequest(request);
-    if (sessionId) {
-      sessionDb.deleteBySessionId(sessionId);
-    }
+    setCookie("glimpse_session", session.session_id, { ...cookieOptions(), maxAge: 7 * 86400 });
     return { success: true };
   });
-
-function getSessionIdFromRequest(request: Request): string | null {
-  const cookieHeader = request.headers.get("cookie");
-  if (!cookieHeader) return null;
-
-  const cookies = cookieHeader.split(";").map((c) => c.trim());
-  const sessionCookie = cookies.find((c) => c.startsWith("glimpse_session="));
-  if (!sessionCookie) return null;
-
-  return sessionCookie.split("=")[1] || null;
-}
-
-function generateRandomState(): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < 32; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
+export const logout = createServerFn({ method: "POST" }).handler(async () => {
+  const token = getCookie("glimpse_session");
+  if (token) sessionDb.deleteBySessionId(token);
+  deleteCookie("glimpse_session", { path: "/" });
+  return { success: true };
+});

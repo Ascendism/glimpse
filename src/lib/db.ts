@@ -1,9 +1,10 @@
+import { randomBytes } from "node:crypto";
 import Database from "better-sqlite3";
 import { join } from "path";
 import { tmpdir } from "os";
 import { existsSync, mkdirSync } from "fs";
 
-const STORAGE_DIR = join(tmpdir(), "glimpse-dev-state");
+const STORAGE_DIR = process.env["GLIMPSE_STATE_DIR"] || join(process.cwd(), ".data");
 const DB_PATH = join(STORAGE_DIR, "glimpse.db");
 
 if (typeof process !== "undefined" && !existsSync(STORAGE_DIR)) {
@@ -101,7 +102,9 @@ export type LeaderboardStats = {
 };
 
 export const userDb = {
-  upsert: (user: Omit<User, "created_at" | "updated_at"> & { created_at?: number; updated_at?: number }) => {
+  upsert: (
+    user: Omit<User, "created_at" | "updated_at"> & { created_at?: number; updated_at?: number },
+  ) => {
     const now = Date.now();
     const db = getDb();
     const stmt = db.prepare(`
@@ -119,7 +122,7 @@ export const userDb = {
       user.discriminator ?? null,
       user.avatar ?? null,
       user.created_at ?? now,
-      now
+      now,
     );
     return userDb.getById(user.discord_id)!;
   },
@@ -186,7 +189,7 @@ export const leaderboardDb = {
       entry.table_id,
       entry.points_earned,
       entry.placement ?? null,
-      entry.game_completed_at
+      entry.game_completed_at,
     );
     return { id: result.lastInsertRowid as number, ...entry };
   },
@@ -243,14 +246,5 @@ export const leaderboardDb = {
 };
 
 function generateSessionId(): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < 64; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+  return randomBytes(32).toString("hex");
 }
-
-setInterval(() => {
-  sessionDb.deleteExpired();
-}, 60 * 60 * 1000); // Clean up expired sessions every hour

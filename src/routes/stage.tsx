@@ -4,13 +4,13 @@ import { PuzzleBoard } from "@/components/PuzzleBoard";
 import { GlimpsePlayer } from "@/components/GlimpsePlayer";
 import { layoutPhrase, type Cell } from "@/lib/puzzle";
 import type { GameState } from "@/lib/game-state";
-import { PHASE_DURATIONS } from "@/lib/game-state";
+
 import { fetchGameState as fetchGameStateAction } from "@/lib/game-actions";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/stage")({
   validateSearch: (search: Record<string, unknown>) => ({
-    table: typeof search.table === "string" ? search.table : undefined,
+    table: typeof search["table"] === "string" ? search["table"] : undefined,
   }),
   head: () => ({
     meta: [
@@ -26,6 +26,7 @@ export const Route = createFileRoute("/stage")({
 
 function StageView() {
   const { table: tableId } = useSearch({ from: "/stage" });
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
   const [delays, setDelays] = useState<Record<string, number>>({});
@@ -36,43 +37,50 @@ function StageView() {
     ? gameState.library.clips.find((c) => c.id === gameState.currentClipId)
     : null;
 
-  const rows: Cell[][] = useMemo(
-    () => (currentClip ? layoutPhrase(currentClip.title) : []),
-    [currentClip],
-  );
-  
+  const rows: Cell[][] = useMemo(() => gameState?.boardRows ?? [], [gameState?.boardRows]);
+
   // Calculate time remaining in current phase
   useEffect(() => {
     // Use routine deadline if routine is running, otherwise fall back to manual phase deadline
-    const deadline = gameState?.routine?.status === "running" 
-      ? gameState.routine.phaseDeadline 
-      : gameState?.phaseDeadline;
-      
+    const deadline =
+      gameState?.routine?.status === "running"
+        ? gameState.routine.phaseDeadline
+        : gameState?.phaseDeadline;
+
     if (!deadline || gameState?.sessionPaused) {
       setTimeRemaining(null);
       return;
     }
-    
+
     const updateTimer = () => {
       const now = Date.now();
       const remaining = Math.max(0, deadline - now);
       setTimeRemaining(remaining);
     };
-    
+
     updateTimer();
     const timer = window.setInterval(updateTimer, 100);
-    
+
     return () => clearInterval(timer);
-  }, [gameState?.phaseDeadline, gameState?.routine?.phaseDeadline, gameState?.routine?.status, gameState?.sessionPaused]);
+  }, [
+    gameState?.phaseDeadline,
+    gameState?.routine?.phaseDeadline,
+    gameState?.routine?.status,
+    gameState?.sessionPaused,
+  ]);
 
   const fetchGameState = useCallback(async () => {
     if (!tableId) return;
     try {
       const normalizedId = tableId.toUpperCase();
-      const data = await fetchGameStateAction({ data: normalizedId });
+      const data = await fetchGameStateAction({
+        signal: AbortSignal.timeout(10000),
+        data: { tableId: normalizedId },
+      });
       setGameState(data.table);
+      setConnectionError(null);
     } catch (error) {
-      console.error("Failed to fetch game state:", error);
+      setConnectionError(error instanceof Error ? error.message : "Connection lost. Retrying…");
     }
   }, [tableId]);
 
@@ -90,7 +98,11 @@ function StageView() {
       ids.forEach((id, i) => (nextDelays[id] = i * 110));
       setDelays(nextDelays);
       setRevealed(new Set(ids));
-    } else if (gameState?.phase === "playing" || gameState?.phase === "guessing" || gameState?.phase === "judging") {
+    } else if (
+      gameState?.phase === "playing" ||
+      gameState?.phase === "guessing" ||
+      gameState?.phase === "judging"
+    ) {
       // Show hint reveals without animation
       setRevealed(new Set(gameState?.hintRevealedPositions ?? []));
       setDelays({});
@@ -98,7 +110,13 @@ function StageView() {
       setRevealed(new Set());
       setDelays({});
     }
-  }, [gameState?.phase, gameState?.revealedTitle, gameState?.hintRevealedPositions, currentClip, rows]);
+  }, [
+    gameState?.phase,
+    gameState?.revealedTitle,
+    gameState?.hintRevealedPositions,
+    currentClip,
+    rows,
+  ]);
 
   useEffect(() => {
     if (tableId) {
@@ -108,6 +126,7 @@ function StageView() {
         if (pollInterval.current) clearInterval(pollInterval.current);
       };
     }
+    return undefined;
   }, [tableId, fetchGameState]);
 
   if (!tableId) {
@@ -128,6 +147,11 @@ function StageView() {
 
   return (
     <main className="stage-bg min-h-screen font-body text-white/90">
+      {connectionError && (
+        <div role="alert" className="bg-red-950 p-3 text-center text-red-200">
+          {connectionError}
+        </div>
+      )}
       <div className="mx-auto flex max-w-7xl flex-col gap-6 px-6 py-6">
         <header className="flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -154,7 +178,7 @@ function StageView() {
               "rounded-xl border-2 px-8 py-4 font-display text-center uppercase tracking-wider transition-all",
               timeRemaining <= 5000
                 ? "border-red-500 bg-red-500/20 text-red-300 animate-pulse"
-                : "border-gold bg-gold/20 text-gold"
+                : "border-gold bg-gold/20 text-gold",
             )}
           >
             <span className="text-3xl font-bold">
@@ -165,11 +189,16 @@ function StageView() {
           </div>
         )}
 
-        <div className="grid gap-6 lg:grid-cols-[1fr,380px]">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
           <div className="space-y-6">
-            {gameState?.phase === "reveal" && currentClip && (
+            {currentClip && (
               <div className="space-y-4">
-                <PuzzleBoard rows={rows} revealed={revealed} delays={delays} />
+                <PuzzleBoard
+                  key={gameState?.roundId}
+                  rows={rows}
+                  revealed={revealed}
+                  delays={delays}
+                />
                 <div className="text-center">
                   <span className="rounded-full border border-gold/40 bg-black/30 px-6 py-2.5 font-display text-2xl tracking-[0.25em] text-gold uppercase">
                     {currentClip.category} · {currentClip.type}
@@ -178,30 +207,27 @@ function StageView() {
               </div>
             )}
 
-            {/* Show hint reveals during gameplay if any letters revealed */}
-            {gameState?.phase !== "reveal" && currentClip && gameState.hintRevealedPositions.length > 0 && (
-              <div className="space-y-2">
-                <PuzzleBoard rows={rows} revealed={revealed} delays={delays} />
-                <div className="text-center text-sm text-gold/70 font-display uppercase tracking-wider">
-                  {gameState.hintRevealedPositions.length} hint{gameState.hintRevealedPositions.length !== 1 ? 's' : ''} revealed
-                </div>
-              </div>
-            )}
-
             {gameState?.currentClipId &&
               currentClip &&
-              gameState.phase !== "reveal" && (() => {
+              gameState.phase !== "reveal" &&
+              (() => {
                 const clipMetadata = currentClip.metadata;
                 const isYouTubeClip = clipMetadata && "youtubeId" in clipMetadata;
                 const isUploadClip = clipMetadata && "fileName" in clipMetadata;
                 const youtubeId = isYouTubeClip ? clipMetadata.youtubeId : undefined;
-                const videoUrl = isUploadClip ? currentClip.source.id : undefined;
+                const videoUrl = !isYouTubeClip ? currentClip.source.id : undefined;
                 const timeStart = clipMetadata?.timeStart ?? 0;
                 const timeEnd = clipMetadata?.timeEnd;
-                
+
                 return (
                   <div className="board-frame aspect-video relative">
                     <GlimpsePlayer
+                      key={gameState.roundId}
+                      segmentDuration={
+                        gameState.segmentLadder?.segmentDurations[
+                          gameState.segmentLadder.currentSegmentIndex
+                        ]
+                      }
                       youtubeId={youtubeId}
                       videoUrl={videoUrl}
                       playing={gameState.clipPlaying}
@@ -236,9 +262,7 @@ function StageView() {
                   key={p.id}
                   className={cn(
                     "rounded-lg border px-4 py-3 transition-all",
-                    p.lockedIn
-                      ? "border-gold/40 bg-gold/10"
-                      : "border-white/5 bg-white/5",
+                    p.lockedIn ? "border-gold/40 bg-gold/10" : "border-white/5 bg-white/5",
                   )}
                 >
                   <div className="flex items-center justify-between">
@@ -262,9 +286,7 @@ function StageView() {
                         )}
                       </div>
                     </div>
-                    <div className="font-display text-3xl text-gold tracking-wider">
-                      {p.score}
-                    </div>
+                    <div className="font-display text-3xl text-gold tracking-wider">{p.score}</div>
                   </div>
                 </div>
               ))}
@@ -285,13 +307,8 @@ function StageView() {
             </h3>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {gameState.guesses.map((g) => (
-                <div
-                  key={g.id}
-                  className="rounded-lg border border-white/10 bg-white/5 px-4 py-3"
-                >
-                  <div className="font-semibold text-gold text-sm mb-1">
-                    {g.playerName}
-                  </div>
+                <div key={g.id} className="rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+                  <div className="font-semibold text-gold text-sm mb-1">{g.playerName}</div>
                   <div className="text-white/90 text-lg">{g.text}</div>
                 </div>
               ))}

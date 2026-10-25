@@ -1,7 +1,5 @@
 export type Cell =
-  | { kind: "empty" }
-  | { kind: "letter"; char: string }
-  | { kind: "punct"; char: string };
+  { kind: "empty" } | { kind: "letter"; char: string } | { kind: "punct"; char: string };
 
 export const ROW_WIDTHS = [12, 14, 14, 12];
 export const TOTAL_ROWS = ROW_WIDTHS.length;
@@ -53,50 +51,35 @@ export const GLIMPSE_CLIPS: GlimpseClip[] = [
   },
 ];
 
-const isLetter = (c: string) => /[A-Z]/.test(c);
+const isLetter = (c: string) => /[\p{L}\p{N}]/u.test(c);
 
-/** Lay a phrase out on the classic 4-row board, centering each line. */
+/** Keep the classic board shape, adding rows instead of silently dropping title characters. */
 export function layoutPhrase(phrase: string): Cell[][] {
-  const words = phrase.toUpperCase().trim().split(/\s+/);
-  const lines: string[][] = [];
-  let current: string[] = [];
-  let rowIndex = 0;
-
-  const width = () => ROW_WIDTHS[Math.min(rowIndex, TOTAL_ROWS - 1)] ?? 12;
-  const len = (ws: string[]) => ws.join(" ").length;
-
+  const words = phrase.toUpperCase().trim().split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = "";
   for (const word of words) {
-    const candidate = [...current, word];
-    if (len(candidate) > width() && current.length > 0) {
-      lines.push(current);
-      current = [word];
-      rowIndex++;
-    } else {
-      current = candidate;
+    const letters = Array.from(word);
+    if (line && Array.from(line).length + 1 + letters.length > 14) {
+      lines.push(line);
+      line = "";
     }
-  }
-  if (current.length) lines.push(current);
-
-  // Prefer vertical centering when the phrase is short.
-  const pad = Math.max(0, Math.floor((TOTAL_ROWS - lines.length) / 2));
-  const rows: Cell[][] = [];
-
-  for (let r = 0; r < TOTAL_ROWS; r++) {
-    const w = ROW_WIDTHS[r] ?? 12;
-    const line = lines[r - pad];
-    const cells: Cell[] = Array.from({ length: w }, () => ({ kind: "empty" }) as Cell);
-    if (line) {
-      const text = line.join(" ").slice(0, w);
-      const start = Math.floor((w - text.length) / 2);
-      for (let i = 0; i < text.length; i++) {
-        const ch = text[i] ?? " ";
-        if (ch === " ") continue;
-        cells[start + i] = isLetter(ch)
-          ? { kind: "letter", char: ch }
-          : { kind: "punct", char: ch };
-      }
+    while (letters.length > 14) {
+      lines.push(letters.splice(0, 14).join(""));
     }
-    rows.push(cells);
+    if (letters.length) line += (line ? " " : "") + letters.join("");
   }
-  return rows;
+  if (line) lines.push(line);
+  const height = Math.max(TOTAL_ROWS, lines.length);
+  const pad = Math.floor((height - lines.length) / 2);
+  return Array.from({ length: height }, (_, r) => {
+    const text = Array.from(lines[r - pad] ?? "");
+    const width = (r === 0 || r === height - 1) && text.length <= 12 ? 12 : 14;
+    const cells: Cell[] = Array.from({ length: width }, () => ({ kind: "empty" }));
+    const start = Math.floor((width - text.length) / 2);
+    text.forEach((char, i) => {
+      if (char !== " ") cells[start + i] = { kind: isLetter(char) ? "letter" : "punct", char };
+    });
+    return cells;
+  });
 }

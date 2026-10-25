@@ -9,6 +9,14 @@ lerna-debug.log*
 
 # Environment
 .env
+.env.*
+!.env.example
+.data/
+.test-state*/
+test-results/
+playwright-report/
+audit-*.png
+build-check.log
 
 node_modules
 dist
